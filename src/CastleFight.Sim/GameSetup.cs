@@ -3,6 +3,9 @@ namespace CastleFight.Sim;
 /// <summary>Everything every client must agree on before tick 0.</summary>
 public sealed record GameSetup(ulong Seed, IReadOnlyList<byte> PlayerTeams)
 {
+    /// <summary>4v4. Normal matches are 2v2 or 3v3; 8 players is for rare big games.</summary>
+    public const int MaxPlayers = 8;
+
     public int StartingGold { get; init; } = 300;
     public int IncomePerSecond { get; init; } = 10;
 

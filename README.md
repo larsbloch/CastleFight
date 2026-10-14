@@ -1,6 +1,6 @@
 # Castle Fight
 
-Lane battle game for 4-6 players. Godot 4.7 (.NET) + C#, desktop only, deterministic lockstep multiplayer.
+Lane battle game for up to 8 players (usually 2v2 or 3v3). Godot 4.7 (.NET) + C#, desktop only, deterministic lockstep multiplayer.
 
 ## Layout
 
@@ -9,6 +9,7 @@ Lane battle game for 4-6 players. Godot 4.7 (.NET) + C#, desktop only, determini
 | `src/CastleFight.Sim` | The whole game simulation in plain C#. No Godot references. Fixed-point math only. |
 | `tests/CastleFight.Sim.Tests` | Determinism, gameplay and grid tests. |
 | `tools/CastleFight.Bench` | Headless stress benchmark (ms per tick at N units). |
+| `docs/NEXT_STEPS.md` | Roadmap and handover notes: what is done, what is next. |
 | `game/` | Godot project: rendering (MultiMesh), camera, input, HUD. Reads the simulation, never changes it except through commands. |
 
 ## Rules for code in `CastleFight.Sim`

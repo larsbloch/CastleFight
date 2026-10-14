@@ -143,6 +143,18 @@ public class SimulationTests
     }
 
     [Fact]
+    public void Eight_players_is_the_maximum()
+    {
+        var match = new Match(seed: 3, playersPerTeam: 4);
+        for (int tick = 0; tick < Simulation.TicksPerSecond * 20; tick++)
+            match.Step();
+
+        Assert.Equal(8, match.Sim.Players.Count);
+        Assert.All(match.Sim.Players, p => Assert.True(p.Gold < 300 + 10 * 20, $"player {p.Id} never built anything"));
+        Assert.Throws<ArgumentException>(() => new Simulation(GameSetup.ForTeams(1, 5)));
+    }
+
+    [Fact]
     public void Freed_slots_are_reused_with_a_new_generation()
     {
         var pool = new UnitPool(initialCapacity: 2);
@@ -167,9 +179,9 @@ public class SimulationTests
         readonly CommandSchedule _schedule = new();
         readonly ScriptedBot[] _bots;
 
-        public Match(ulong seed)
+        public Match(ulong seed, int playersPerTeam = 3)
         {
-            var setup = GameSetup.ForTeams(seed, 3);
+            var setup = GameSetup.ForTeams(seed, playersPerTeam);
             Sim = new Simulation(setup);
             _bots = Enumerable.Range(0, setup.PlayerTeams.Count).Select(id => new ScriptedBot(id, seed)).ToArray();
         }

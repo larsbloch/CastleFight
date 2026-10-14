@@ -35,8 +35,8 @@ public sealed class Simulation
 
     public Simulation(GameSetup setup, MapLayout? map = null, UnitCatalog? catalog = null)
     {
-        if (setup.PlayerTeams.Count is 0 or >= NeutralOwner)
-            throw new ArgumentException("Invalid player count.", nameof(setup));
+        if (setup.PlayerTeams.Count is 0 or > GameSetup.MaxPlayers)
+            throw new ArgumentException($"A match needs 1 to {GameSetup.MaxPlayers} players.", nameof(setup));
 
         Map = map ?? MapLayout.CreateDefault();
         Catalog = catalog ?? UnitCatalog.CreateDefault();
