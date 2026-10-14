@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Godot plays from the editor with Debug builds, which are ~3x slower in hot loops.
+         Always optimise the simulation; set to false temporarily if you need to step through it. -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CastleFight.Sim.Tests" />
+  </ItemGroup>
+
+</Project>

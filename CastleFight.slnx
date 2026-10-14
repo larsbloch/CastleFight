@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/game/">
+    <Project Path="game/CastleFight.csproj">
+      <BuildType Project="Debug" />
+    </Project>
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/CastleFight.Sim/CastleFight.Sim.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CastleFight.Sim.Tests/CastleFight.Sim.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/CastleFight.Bench/CastleFight.Bench.csproj" />
+  </Folder>
+</Solution>
