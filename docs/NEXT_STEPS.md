@@ -2,7 +2,7 @@
 
 Handover for a new conversation. Start it with:
 
-> Read `README.md` and `docs/NEXT_STEPS.md`, then start on step 4 (networking) on a `networking` branch.
+> Read `README.md` and `docs/NEXT_STEPS.md`, then start on step 4 (networking).
 
 ## Where we are
 
@@ -28,7 +28,7 @@ because the sim currently runs on the render thread.
 | Players | 1-8 (`GameSetup.MaxPlayers`). Usually 2v2/3v3; 4v4 is for rare big games. |
 | Tick rate | 20 ticks/s, input delay 3 ticks (150 ms) to start with |
 | Sim rules | No float/double, no `System.Random`, no clocks, no Godot APIs in `CastleFight.Sim` (see README) |
-| Workflow | Work on feature branches; only commit/push when asked. Repo: github.com/larsbloch/CastleFight |
+| Workflow | Commit directly to `main` and push (single developer for now). Repo: github.com/larsbloch/CastleFight |
 
 ## Step 4: lockstep networking (next)
 
