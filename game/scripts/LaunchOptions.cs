@@ -11,6 +11,9 @@ namespace CastleFight.Game;
 /// godot --path game -- --host --autostart 2 --bots 2      host, start once 2 players are in and ready
 /// godot --path game -- --join 127.0.0.1 --ready --name B  join and ready up
 /// --smoke (stress wave + HUD log), --autoplay (a bot plays for you), --quit-at-tick N, --print-hashes, --port P
+/// --screen host|join|options (open that menu), --screenshot out.png [--screenshot-frames N] (save the window
+/// after N frames, default 150, and quit),
+/// --say "text" (send one chat line in the lobby)
 /// </code>
 /// </summary>
 public sealed class LaunchOptions
@@ -28,6 +31,10 @@ public sealed class LaunchOptions
     public bool AutoPlay { get; private set; }
     public int QuitAtTick { get; private set; }
     public bool PrintHashes { get; private set; }
+    public string? Screen { get; private set; }
+    public string? ScreenshotPath { get; private set; }
+    public int ScreenshotFrames { get; private set; } = 150;
+    public string? Say { get; private set; }
 
     /// <summary>Skip the menu: start or connect straight away.</summary>
     public bool SkipMenu => Smoke || Map is not null || Host || JoinAddress is not null;
@@ -47,6 +54,10 @@ public sealed class LaunchOptions
                 case "--print-hashes": options.PrintHashes = true; break;
                 case "--join": options.JoinAddress = Next(); break;
                 case "--name": options.Name = Next(); break;
+                case "--screen": options.Screen = Next(); break;
+                case "--screenshot": options.ScreenshotPath = Next(); break;
+                case "--screenshot-frames" when int.TryParse(Next(), out int frames): options.ScreenshotFrames = frames; break;
+                case "--say": options.Say = Next(); break;
                 case "--map" when byte.TryParse(Next(), out byte map) && MapCatalog.IsValid((MapId)map): options.Map = (MapId)map; break;
                 case "--port" when int.TryParse(Next(), out int port): options.Port = port; break;
                 case "--bots" when int.TryParse(Next(), out int bots): options.Bots = bots; break;

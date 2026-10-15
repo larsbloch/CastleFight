@@ -13,7 +13,8 @@ Lane battle game for up to 8 players (usually 2v2 or 3v3). Godot 4.7 (.NET) + C#
 | `tools/CastleFight.Bench` | Headless stress benchmark (ms per tick at N units). |
 | `tools/CastleFight.Server` | Standalone relay server (the same relay a hosting player runs inside the game). |
 | `docs/NEXT_STEPS.md` | Roadmap and handover notes: what is done, what is next. |
-| `game/` | Godot project: menu, lobby, rendering (MultiMesh), camera, input, HUD. Reads the simulation, never changes it except through commands. |
+| `game/` | Godot project: menus, lobby, rendering (MultiMesh), camera, input, HUD. Reads the simulation, never changes it except through commands. |
+| `game/scripts/ui` | Menus and lobby. The wooden theme is painted in code (`UiArt`, `UiTheme`) plus two shaders in `game/shaders`; fonts (OFL) are in `game/assets/fonts`. |
 
 ## Rules for code in `CastleFight.Sim`
 
@@ -35,14 +36,21 @@ closest to where they stand, so building at the top or bottom of the zone picks 
 
 Controls: `1`-`4` choose a building, a green ghost shows where it goes (amber: not enough gold, red: blocked),
 left click places it, right click or `Esc` cancels. `WASD` pans, the mouse wheel zooms, `K` spawns a stress wave.
-`Esc` twice leaves the match. Single player only: `Space` pauses, `R` restarts.
+`Esc` twice leaves the match. Offline only: `Space` pauses, `R` restarts.
+
+Main menu: **Host Game**, **Join Game**, **Options** (name, window mode, frame cap, vsync), **Exit**. Settings,
+favourite servers and the last host setup are saved in `settings.cfg` in the Godot user folder.
 
 ### Multiplayer
 
-- **Host:** main menu, *Host game*. Your game runs the relay on UDP port **7777** (changeable). Players outside
-  your network need that UDP port forwarded to your PC (and allowed through the Windows firewall).
-- **Join:** enter the host's address and port, then *Join*. In the lobby, pick a team and tick *Ready*. The host
-  picks the map, adds bots and starts.
+- **Host:** *Host Game*, pick the map and how many bots fight with and against you, then *Open Lobby*. Your game
+  runs the relay on UDP port **7777** (changeable there). Players outside your network need that UDP port
+  forwarded to your PC (and allowed through the Windows firewall). *Play Offline* starts the same setup against
+  bots on your PC only.
+- **Join:** *Join Game*, pick a favourite or recent server (double-click joins) or type an address and port.
+  *Save as Favorite* keeps it in the list.
+- **Lobby:** both armies with their open places, the map, a ready check and chat. Everyone can switch army and
+  tick *Ready*; the host picks the map, adds, moves and removes bots and starts the battle.
 - **Dedicated server:** `dotnet run -c Release --project tools/CastleFight.Server -- --port 7777`. Everyone joins
   it; the first to join is the lobby host. It opens a new lobby when a game ends.
 - Everyone must run the same build. If a desync is detected, the game stops and each player gets
@@ -70,6 +78,15 @@ godot --headless --path game -- --join 127.0.0.1 --ready --autoplay --quit-at-ti
 The last two play a networked game between two processes; their `HASH` lines must be identical. All launch
 options are listed in `game/scripts/LaunchOptions.cs` (for example `--map 1 --players-per-team 4` starts single
 player straight away).
+
+Screenshots of the menus (needs a window, so no `--headless`): `--screen host|join|options` opens a menu,
+`--screenshot out.png [--screenshot-frames N]` saves the window after N frames and quits, `--say "text"` sends a
+chat line once in the lobby. For example, a lobby with chat:
+
+```
+godot --path game -- --host --bots 3 --say "Welcome!" --screenshot lobby.png --screenshot-frames 600
+godot --headless --path game -- --join 127.0.0.1 --name Ragnar --ready --say "gl hf"   # within ~8 s
+```
 
 ## Windows build
 

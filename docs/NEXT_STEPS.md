@@ -17,6 +17,9 @@ Steps 1-4 are done and on `main`:
    building placement with a placement ghost, units choosing the nearest lane, `src/CastleFight.Net`
    (relay, client, lobby, desync detection), main menu + lobby UI, standalone server.
 
+Then a **menu and lobby UI pass** (details below): wooden/iron theme, Host / Join / Options screens, map icons,
+favourite servers and lobby chat. Step 5 (sim thread) was deliberately skipped for now; see "Later steps".
+
 Benchmark (dev PC, 16 threads, single-threaded sim, `--units 4000` = 8,000 units, 300 ticks):
 
 | Map | 8,000 units, avg ms/tick |
@@ -44,7 +47,8 @@ The new maps are roomier, so the 8,000-unit target fits the 8 ms practical budge
 | Grid | 1-unit tiles; current buildings 2x2, castle 4x4 |
 | Lane choice | Never fixed at spawn: a unit always heads for the lane closest to where it stands now |
 | Sim rules | No float/double, no `System.Random`, no clocks, no Godot APIs in `CastleFight.Sim` (see README) |
-| Workflow | Commit directly to `main` and push (single developer for now). Repo: github.com/larsbloch/CastleFight |
+| Workflow | Every task on its own branch with a pull request to `main` (several agents work in parallel). Repo: github.com/larsbloch/CastleFight |
+| Menu look | Weathered wood, iron and gold; Cinzel / Cinzel Decorative / Alegreya fonts (OFL). Textures are painted in code (`UiArt`), no image files. Menus scale with the window (1600x900 base); matches render at native size. |
 
 ## Step 4 (done): maps, grid, lockstep networking
 
@@ -105,6 +109,8 @@ green/amber/red ghost.
 | C → S | `StateHash(tick, hash)` | Every 20 ticks. |
 | S → all | `Desync(tick, dumpTick, hashes)` | The relay halts. Every client steps to exactly `dumpTick` and writes `user://desync_<tick>_<slot>.txt` (`Simulation.DumpState`, one unit per line, diffable). |
 | S → all | `PlayerLeft(playerId)` | The relay stops waiting for them; their buildings keep spawning. |
+| C → S | `SendChat(text)` | Lobby only (protocol 2). The relay makes it one line of at most 120 characters and drops blank ones. |
+| S → all | `Chat(slot, team, name, text)` | Slot 255 is a relay notice: "X joined.", "X left.", "X is now the host." Clients keep the last 200 lines. |
 
 ### Acceptance
 
@@ -128,6 +134,26 @@ green/amber/red ghost.
 - Replays: record `GameStart` + every `TickBundle`; replaying must reproduce the hashes.
 - LAN discovery (LiteNetLib supports broadcast). Steam's relay later removes port forwarding.
 - If the host's game closes, the in-process relay goes with it; the standalone server avoids that.
+
+## Menu and lobby UI pass (done)
+
+- **Look:** `UiTheme` builds one Godot `Theme` (fonts, colours, styles for every control type, variations such as
+  `HeaderLabel`, `BigButton`, `SmallButton`, `InsetPanel`, `CardButton`, `ListRow`). `UiArt` paints the
+  textures at startup (planked wood with an iron frame, corner brackets and rivets, wooden buttons, dark insets,
+  check boxes). `shaders/menu_backdrop.gdshader` is the animated background (dusk sky, smoke, castle
+  silhouettes, embers); `shaders/gold_text.gdshader` makes the "CASTLE FIGHT" title worn gold.
+- Themes only pass down through Controls, so `App` keeps every menu under one themed full-screen `Control`
+  (with the backdrop). The in-game HUD is not themed yet.
+- **Screens:** `MainMenu` (Host Game / Join Game / Options / Exit), `HostScreen` (map cards, bots per army,
+  port; *Open Lobby* or *Play Offline*), `JoinScreen` (favourite + recent servers, address form),
+  `OptionsScreen` (name, window mode, frame cap, vsync), `LobbyScreen` (map, both armies with open places,
+  ready check, `ChatPanel`).
+- `MapIcon` draws any `MapDefinition` as an icon (lanes, forest walls, bases, build zones, castles), so new
+  maps get an icon for free. `MapSelector` turns them into cards.
+- Single player is now *Host Game → Play Offline* (your allies + enemy bots from the host setup).
+- The protocol went to version 2 for chat (see the table above).
+- Ideas: a ping per player in the lobby, kicking players, server status/ping for favourites (LiteNetLib
+  unconnected messages), in-game chat, theming the HUD, sounds for clicks.
 
 ## Later steps (in rough order)
 

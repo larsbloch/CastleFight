@@ -24,6 +24,9 @@ public class CodecTests
         new StateHashMessage(60, ulong.MaxValue),
         new DesyncMessage(60, 64, [new SlotHash(0, 1), new SlotHash(2, 3)]),
         new PlayerLeftMessage(6),
+        new SendChatMessage("gg, rematch?"),
+        new ChatMessage(3, 1, "Ærlig Øjvind", "Blåbærgrød til alle"),
+        ChatMessage.Notice("Bob joined."),
     };
 
     [Theory]
@@ -60,6 +63,18 @@ public class CodecTests
         var hello = new HelloMessage(1, Guid.Empty, new string('x', 500));
         var decoded = (HelloMessage)Message.Decode(hello.Encode());
         Assert.Equal(ProtocolInfo.MaxStringBytes, decoded.Name.Length);
+    }
+
+    [Fact]
+    public void Cutting_a_string_never_splits_a_character()
+    {
+        // 'x' + 'ø' * n: every 'ø' is two bytes, so the byte limit lands in the middle of one.
+        var hello = new HelloMessage(1, Guid.Empty, "x" + new string('ø', 100));
+        var decoded = (HelloMessage)Message.Decode(hello.Encode());
+        Assert.Equal("x" + new string('ø', (ProtocolInfo.MaxStringBytes - 1) / 2), decoded.Name);
+
+        var chat = new SendChatMessage(new string('æ', 300));
+        Assert.Equal(new string('æ', ProtocolInfo.MaxChatBytes / 2), ((SendChatMessage)Message.Decode(chat.Encode())).Text);
     }
 
     [Fact]
