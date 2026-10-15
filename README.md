@@ -70,3 +70,29 @@ godot --headless --path game -- --join 127.0.0.1 --ready --autoplay --quit-at-ti
 The last two play a networked game between two processes; their `HASH` lines must be identical. All launch
 options are listed in `game/scripts/LaunchOptions.cs` (for example `--map 1 --players-per-team 4` starts single
 player straight away).
+
+## Windows build
+
+Needs the Godot 4.7.2 **mono** export templates (`%APPDATA%\Godot\export_templates\4.7.2.stable.mono\`).
+From the repo root, with `godot` being the Godot 4.7.2 mono console executable:
+
+```
+godot --headless --path game --import
+godot --headless --path game --export-release "Windows Desktop" ../build/windows/CastleFight.exe
+```
+
+The first command is only needed after adding or renaming scripts. The output in `build/windows/` (git-ignored) is:
+
+- `CastleFight.exe` (~110 MB, the engine plus the packed game data)
+- `data_CastleFight_windows_x86_64/` with the .NET runtime and the game's DLLs (`CastleFight.dll`,
+  `CastleFight.Sim.dll`, `CastleFight.Net.dll`, `LiteNetLib.dll`, ...)
+
+To share the game, zip and send the **whole `build/windows` folder**: the exe does not run without the `data_` folder
+next to it. Quick check that the build runs (prints a HUD line with the unit count and state hash):
+
+```
+build/windows/CastleFight.exe --headless --fixed-fps 60 --quit-after 700 -- --smoke --map 2
+```
+
+The first time a player hosts, Windows asks whether to allow `CastleFight.exe` through the firewall. Allow it,
+or nobody can join.

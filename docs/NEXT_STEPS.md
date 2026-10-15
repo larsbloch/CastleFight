@@ -114,7 +114,9 @@ green/amber/red ghost.
 - [x] Mismatched protocol versions and builds are rejected.
 - [x] Real UDP: two headless Godot instances (host + join), and two through the standalone server, had identical
       hashes through tick 600 (commands in the README). Also covered by `LiteNetLoopbackTests`.
-- [x] Release export works and contains `CastleFight.Net.dll` and `LiteNetLib.dll`.
+- [x] Release export works and contains `CastleFight.Net.dll` and `LiteNetLib.dll`. The exported exe passes the
+      headless smoke test, and the owner tried the Windows build and confirmed it works well (README:
+      "Windows build").
 - [ ] Manual: host + 2 windows, a full match played by hand (the owner).
 - [ ] Manual: 8 windows (or 2-3 windows plus bots), K-spawn stress up to 8,000 units, watch step times.
 
