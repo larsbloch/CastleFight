@@ -26,6 +26,8 @@ because the sim currently runs on the render thread.
 | Platform | Desktop (Windows first). No web: Godot 4 can't export C# to web. |
 | Multiplayer model | Deterministic lockstep: only commands are sent; every client runs the sim. |
 | Players | 1-8 (`GameSetup.MaxPlayers`). Usually 2v2/3v3; 4v4 is for rare big games. |
+| Target scale | ~8,000 units alive (1,000 per player). The 160x32 lane is packed full at 8,000, so it will likely grow for 8 players. |
+| Art style | Warcraft 3-like: low poly (300-800 tris per normal unit) with hand-painted textures and team-colour masks. Not modern high-poly. |
 | Tick rate | 20 ticks/s, input delay 3 ticks (150 ms) to start with |
 | Sim rules | No float/double, no `System.Random`, no clocks, no Godot APIs in `CastleFight.Sim` (see README) |
 | Workflow | Commit directly to `main` and push (single developer for now). Repo: github.com/larsbloch/CastleFight |
@@ -103,13 +105,67 @@ detection.
 
 5. **Sim on its own thread.** The main thread renders by interpolating between the last two finished ticks,
    so a step can use most of the 50 ms budget without causing frame hitches. Do this when step times go
-   above about 8 ms.
+   above about 8 ms. That will be needed for the 8,000-unit target (benchmark: 8,000 units ≈ 11.6 ms).
 6. **Gameplay design (needs the owner's input).** Races and their buildings/units/tiers, the income
    model (Castle Fight style income/treasure), armor/attack types, projectiles, splash, auras/heals/slows,
    more `UnitBehavior`s. With 8 players there are more buildings, so watch total unit counts.
-7. **Visuals.** Real unit models with GPU-baked animations (vertex animation textures) in the MultiMesh,
-   HP bars, building placement ghost, build menu, minimap, end-of-game score screen.
+7. **Visuals.** See the visuals plan below. Also HP bars, building placement ghost, build menu, minimap,
+   end-of-game score screen.
 8. **Distribution.** Icon, version numbering, Steam (Steamworks relay/matchmaking removes port forwarding).
+
+## Visuals plan: animated models for 8,000 units
+
+This step is independent of networking, so it can move earlier if wanted.
+
+Normal Godot animation (a `Skeleton3D` + `AnimationPlayer` per unit) costs CPU per unit and does not scale to
+thousands. Use **vertex animation textures (VAT)** instead:
+
+- **Bake:** each animation (idle, walk, attack, death) is baked offline into a texture. Each row is one frame,
+  each pixel one vertex position (plus normals).
+- **Draw:** each unit type stays one MultiMesh, one draw call. Per-instance custom data holds animation id,
+  start time, speed and variation. The vertex shader reads the texture, so the CPU does no per-unit
+  animation work.
+- **Sim stays unchanged:** the renderer derives the animation from sim state (`Vel` means walk, target in
+  range means attack). The sim should expose "attacked on tick N" so the swing lines up with the damage.
+- **Deaths:** the sim frees a unit on the tick it dies. The renderer keeps short-lived "corpse" instances to
+  play the death animation.
+- **Team colour:** a mask in the texture, tinted per instance in the shader (WC3 style).
+- **Flying units (gryphons):** a render height offset, plus a sim rule (`IsFlying`: only ranged units and
+  other flyers can hit them).
+
+GPU budget (at 8,000 units, polygon count is the main cost, then shadows):
+
+| Kind | Triangles |
+|---|---|
+| Normal units | 300-800 |
+| Big units (knight on horse, gryphon) | 800-1,500 |
+| Heroes / special | up to 2,000 |
+| Buildings | 1,000-3,000 (few of them) |
+
+- **Blob shadows:** use these (a dark soft decal under each unit, like WC3), not real shadow maps. Shadow maps
+  draw every unit a second time.
+- **LOD:** add LOD versions (150-300 tris) for zoomed-out views if measurements show the need.
+  Small on-screen units waste GPU time on sub-pixel triangles.
+
+### First visuals task
+
+1. Download a CC0 rigged and animated character (KayKit "Adventurers"/"Skeletons" or Quaternius; check the
+   license) in the 500-1,000 triangle range.
+2. Write an editor/bake tool: `.glb` (mesh + skeleton + animations) in, VAT texture + mesh + animation table out.
+3. Write a VAT shader, and add animation selection to `UnitRenderer` via MultiMesh custom data.
+4. Add blob shadows.
+5. Add GPU frame time to the HUD (`RenderingServer.ViewportSetMeasureRenderTime` /
+   `ViewportGetMeasuredRenderTimeGpu`) next to the sim step time.
+6. Stress test: K-spawn up to 8,000 animated units, and record CPU sim ms and GPU ms in this file.
+
+### Where real models come from later
+
+- **The owner trying it:** text/image-to-3D generators (Meshy, Tripo, Hunyuan3D, …) work for exploring a style.
+  Then auto-rig and animate humanoids in Mixamo, and reduce polygons in Blender (AI meshes are usually
+  10k-50k tris).
+- **Final art:** clean up by hand, or commission a hand-painted low-poly artist.
+- **Never ship ripped WC3/Blizzard assets.**
+- The bake tool should accept any rigged and animated `.glb`, wherever it came from.
 
 ## Environment notes
 
