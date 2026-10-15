@@ -8,4 +8,6 @@ TestResults/
 # Godot
 game/.godot/
 
-build/
+build/*
+!build/build-windows.ps1
+!build/build-windows.cmd

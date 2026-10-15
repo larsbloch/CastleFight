@@ -200,6 +200,9 @@ GPU budget (at 8,000 units, polygon count is the main cost, then shadows):
 - .NET SDK 10.0.401 (the broken VS workload manifest is fixed; no workaround needed any more).
 - Godot export templates for 4.7.2 mono (Windows x86_64 only) are installed in
   `%APPDATA%\Godot\export_templates\4.7.2.stable.mono\`.
+- `build/build-windows.ps1` (or double-click `build/build-windows.cmd`) does the whole release build and downloads
+  a portable Godot into `build/tools` if none is installed. That is also the easiest Godot to use for automated
+  checks: `build/tools/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64_console.exe`.
 - Godot itself may not be installed yet: `winget install GodotEngine.GodotEngine.Mono`. For automated
   checks, the portable editor zip from GitHub releases works headless:
   `--headless --path game --import`, then the smoke test from the README, or
