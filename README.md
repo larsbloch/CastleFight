@@ -90,8 +90,17 @@ godot --headless --path game -- --join 127.0.0.1 --name Ragnar --ready --say "gl
 
 ## Windows build
 
-Needs the Godot 4.7.2 **mono** export templates (`%APPDATA%\Godot\export_templates\4.7.2.stable.mono\`).
-From the repo root, with `godot` being the Godot 4.7.2 mono console executable:
+Double-click `build/build-windows.cmd`, or from a terminal:
+
+```
+.\build\build-windows.ps1          # add -Zip for build/CastleFight-windows.zip, -SkipSmokeTest to skip the check
+```
+
+No editor needed. The script finds Godot 4.7.2 .NET (`-Godot <path>`, the `GODOT` environment variable,
+`build/tools`, PATH or a WinGet install). If it is missing, it downloads the portable editor into
+`build/tools` (~100 MB, once). Missing export templates are downloaded to
+`%APPDATA%\Godot\export_templates\4.7.2.stable.mono\` (~1 GB, once). It then imports the project, exports, and
+runs the exported game headless as a smoke test. By hand, with `godot` being the Godot 4.7.2 mono console executable:
 
 ```
 godot --headless --path game --import
