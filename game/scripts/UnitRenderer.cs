@@ -126,10 +126,10 @@ public partial class UnitRenderer : Node3D
         float z = Mathf.Lerp(previous.Y.ToFloat(), current.Y.ToFloat(), alpha);
 
         // Face the target when fighting, otherwise the direction of travel, otherwise down the lane.
-        FixVec2 facing = type.IsStructure ? sim.Map.LaneDirection(u.Team[i])
+        FixVec2 facing = type.IsStructure ? sim.Map.Forward(u.Team[i])
             : u.HasValidTarget(i) ? u.Pos[u.Target[i]] - current
             : !u.Vel[i].IsZero ? u.Vel[i]
-            : sim.Map.LaneDirection(u.Team[i]);
+            : sim.Map.Forward(u.Team[i]);
         float fx = facing.X.ToFloat(), fz = facing.Y.ToFloat();
         float length = Mathf.Sqrt(fx * fx + fz * fz);
         if (length < 1e-5f)
@@ -138,9 +138,10 @@ public partial class UnitRenderer : Node3D
         fz /= length;
 
         float radius = u.Radius[i].ToFloat();
-        float sx = style.SizePerRadius.X * radius;
         float sy = style.SizePerRadius.Y * radius;
-        float sz = style.SizePerRadius.Z * radius;
+        // Structures fill their tile footprint (with a small gap so neighbours stay distinguishable).
+        float sx = type.IsStructure ? type.FootprintTiles * 0.92f : style.SizePerRadius.X * radius;
+        float sz = type.IsStructure ? type.FootprintTiles * 0.92f : style.SizePerRadius.Z * radius;
 
         float health = Mathf.Clamp(u.Hp[i] / (float)type.MaxHp, 0f, 1f);
         Color color = TeamColors[u.Team[i]] * _brightnessOfType[typeId] * (0.45f + 0.55f * health);

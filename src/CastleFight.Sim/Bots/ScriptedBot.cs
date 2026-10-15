@@ -9,7 +9,7 @@ namespace CastleFight.Sim.Bots;
 public sealed class ScriptedBot
 {
     const int ThinkIntervalTicks = Simulation.TicksPerSecond * 2;
-    const int PlacementAttempts = 12;
+    const int PlacementAttempts = 24;
 
     DeterministicRandom _rng;
 
@@ -33,13 +33,15 @@ public sealed class ScriptedBot
         if (player.Gold < sim.Catalog[typeId].Cost)
             return false;
 
-        FixRect zone = sim.Map.BuildZone(player.Team);
+        TileRect zone = sim.Map.BuildZone(player.Team);
+        int size = sim.Catalog[typeId].FootprintTiles;
         for (int attempt = 0; attempt < PlacementAttempts; attempt++)
         {
-            var position = new FixVec2(_rng.NextFix(zone.Min.X, zone.Max.X), _rng.NextFix(zone.Min.Y, zone.Max.Y));
-            if (sim.CanPlaceBuilding(PlayerId, typeId, position))
+            int tileX = zone.MinX + _rng.NextInt(zone.Width - size + 1);
+            int tileY = zone.MinY + _rng.NextInt(zone.Height - size + 1);
+            if (sim.CanPlaceBuilding(PlayerId, typeId, tileX, tileY))
             {
-                command = Command.PlaceBuilding(PlayerId, (ushort)typeId, position);
+                command = Command.PlaceBuilding(PlayerId, (ushort)typeId, tileX, tileY);
                 return true;
             }
         }

@@ -49,13 +49,13 @@ public class SimulationTests
         var sim = new Simulation(GameSetup.ForTeams(1, 1));
         var zone = sim.Map.BuildZone(0);
         int goldBefore = sim.Players[0].Gold;
-        var inside = zone.Center;
-        var outside = sim.Map.BuildZone(1).Center;
+        var enemyZone = sim.Map.BuildZone(1);
 
         sim.Step([
-            Command.PlaceBuilding(0, UnitCatalog.Barracks, inside),
-            Command.PlaceBuilding(0, UnitCatalog.Barracks, inside), // overlaps the first one
-            Command.PlaceBuilding(0, UnitCatalog.Barracks, outside), // enemy zone
+            Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MinX + 4, zone.MinY + 4),
+            Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MinX + 5, zone.MinY + 5), // overlaps the first one
+            Command.PlaceBuilding(0, UnitCatalog.Barracks, enemyZone.MinX + 4, enemyZone.MinY + 4), // enemy zone
+            Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MaxX - 1, zone.MinY + 8), // sticks out of the zone
         ]);
 
         int barracks = CountAlive(sim, UnitCatalog.Barracks);
@@ -68,7 +68,8 @@ public class SimulationTests
     {
         var sim = new Simulation(GameSetup.ForTeams(1, 1));
         var zone = sim.Map.BuildZone(0);
-        sim.Step([Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.Center)]);
+        var (tileX, tileY) = Simulation.FootprintOrigin(zone.Center, 2);
+        sim.Step([Command.PlaceBuilding(0, UnitCatalog.Barracks, tileX, tileY)]);
 
         for (int tick = 0; tick < Simulation.TicksPerSecond * 8; tick++)
             sim.Step([]);
@@ -83,8 +84,8 @@ public class SimulationTests
     [Fact]
     public void A_dense_crowd_keeps_flowing_instead_of_getting_stuck()
     {
-        // A short map squeezes the staging area to 8x28 tiles: 400 footmen nearly fill it.
-        var sim = new Simulation(GameSetup.ForTeams(1, 1), new MapLayout(100, 32));
+        // A short map squeezes the staging area to 10x28 tiles: 400 footmen half fill it.
+        var sim = new Simulation(GameSetup.ForTeams(1, 1), MapCatalog.CreateLaneMap("Short", laneCount: 1, laneWidth: 32, length: 120));
         sim.Step([Command.DebugSpawn(0, UnitCatalog.Footman, 400)]);
         var u = sim.Units;
         var crowd = Enumerable.Range(0, u.HighWater).Where(i => u.Alive[i] && u.Type[i] == UnitCatalog.Footman).ToArray();
@@ -142,10 +143,41 @@ public class SimulationTests
         Assert.True(huntersOnArchers * 2 > huntersWithTarget, $"{huntersOnArchers}/{huntersWithTarget} hunter targets were archers");
     }
 
-    [Fact]
-    public void Eight_players_is_the_maximum()
+    [Theory]
+    [InlineData(MapId.SingleLane)]
+    [InlineData(MapId.TwoLanes)]
+    [InlineData(MapId.ThreeLanes)]
+    public void Same_seed_gives_identical_state_on_every_map(MapId map)
     {
-        var match = new Match(seed: 3, playersPerTeam: 4);
+        var first = new Match(seed: 9, playersPerTeam: 3, map);
+        var second = new Match(seed: 9, playersPerTeam: 3, map);
+        first.Schedule(40, Command.DebugSpawn(0, UnitCatalog.Skirmisher, 200));
+        second.Schedule(40, Command.DebugSpawn(0, UnitCatalog.Skirmisher, 200));
+
+        for (int tick = 0; tick < 1500; tick++)
+        {
+            first.Step();
+            second.Step();
+            if (tick % 10 == 0)
+                Assert.Equal(first.Sim.ComputeStateHash(), second.Sim.ComputeStateHash());
+        }
+        Assert.True(first.Sim.ValidateOccupancy());
+    }
+
+    [Fact]
+    public void Different_maps_give_different_state_hashes()
+    {
+        var single = new Simulation(GameSetup.ForTeams(1, 1, MapId.SingleLane));
+        var two = new Simulation(GameSetup.ForTeams(1, 1, MapId.TwoLanes));
+        Assert.NotEqual(single.ComputeStateHash(), two.ComputeStateHash());
+    }
+
+    [Theory]
+    [InlineData(MapId.SingleLane)]
+    [InlineData(MapId.ThreeLanes)]
+    public void Eight_players_is_the_maximum(MapId map)
+    {
+        var match = new Match(seed: 3, playersPerTeam: 4, map);
         for (int tick = 0; tick < Simulation.TicksPerSecond * 20; tick++)
             match.Step();
 
@@ -174,14 +206,14 @@ public class SimulationTests
         Enumerable.Range(0, sim.Units.HighWater).Count(i => sim.Units.Alive[i] && sim.Units.Type[i] == typeId);
 
     /// <summary>A simulation driven the same way the game drives it: bots plus scheduled commands.</summary>
-    sealed class Match
+    internal sealed class Match
     {
         readonly CommandSchedule _schedule = new();
         readonly ScriptedBot[] _bots;
 
-        public Match(ulong seed, int playersPerTeam = 3)
+        public Match(ulong seed, int playersPerTeam = 3, MapId map = MapId.SingleLane)
         {
-            var setup = GameSetup.ForTeams(seed, playersPerTeam);
+            var setup = GameSetup.ForTeams(seed, playersPerTeam, map);
             Sim = new Simulation(setup);
             _bots = Enumerable.Range(0, setup.PlayerTeams.Count).Select(id => new ScriptedBot(id, seed)).ToArray();
         }

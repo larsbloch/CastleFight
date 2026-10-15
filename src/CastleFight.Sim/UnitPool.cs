@@ -49,8 +49,11 @@ public sealed class UnitPool
     public int[] RetargetTimer { get; private set; } = [];
     public int[] SpawnTimer { get; private set; } = [];
 
-    /// <summary>Lane Y position a <see cref="UnitBehavior.Spreader"/> drifts towards.</summary>
-    public Fix[] PreferredY { get; private set; } = [];
+    /// <summary>
+    /// Where across its lane (0 = low edge, 1 = high edge) a <see cref="UnitBehavior.Spreader"/> drifts to.
+    /// Relative, because the lane is chosen afresh from the unit's position every tick.
+    /// </summary>
+    public Fix[] SpreadFraction { get; private set; } = [];
 
     internal ReadOnlySpan<int> FreeSlots => _freeSlots.AsSpan(0, _freeCount);
 
@@ -109,7 +112,7 @@ public sealed class UnitPool
         AttackCooldown = Resize(AttackCooldown, capacity);
         RetargetTimer = Resize(RetargetTimer, capacity);
         SpawnTimer = Resize(SpawnTimer, capacity);
-        PreferredY = Resize(PreferredY, capacity);
+        SpreadFraction = Resize(SpreadFraction, capacity);
         _freeSlots = Resize(_freeSlots, capacity);
     }
 

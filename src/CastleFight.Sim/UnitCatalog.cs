@@ -20,6 +20,14 @@ public sealed class UnitCatalog
     public UnitCatalog(IEnumerable<UnitType> types)
     {
         _types = types.ToArray();
+        foreach (var type in _types)
+        {
+            bool validFootprint = type.IsStructure
+                ? type.FootprintTiles >= 1 && type.Radius * 2 >= Fix.FromInt(type.FootprintTiles)
+                : type.FootprintTiles == 0;
+            if (!validFootprint)
+                throw new ArgumentException($"{type.Name}: structures need a footprint of at least 1 tile that fits inside 2 x Radius; units have none.", nameof(types));
+        }
         CastleTypeId = Array.FindIndex(_types, t => t.IsCastle);
         if (CastleTypeId < 0)
             throw new ArgumentException("The catalog needs a castle type.", nameof(types));
@@ -46,27 +54,27 @@ public sealed class UnitCatalog
         new UnitType
         {
             Name = "Castle", IsStructure = true, IsCastle = true,
-            MaxHp = 6000, Radius = Tiles(25),
+            MaxHp = 6000, Radius = Tiles(25), FootprintTiles = 4,
             Damage = 40, AttackRange = Tiles(50), AggroRange = Tiles(60), AttackCooldownTicks = Seconds(10),
         },
         new UnitType
         {
-            Name = "Barracks", IsStructure = true, MaxHp = 800, Radius = Tiles(12), Cost = 100,
+            Name = "Barracks", IsStructure = true, MaxHp = 800, Radius = Tiles(12), FootprintTiles = 2, Cost = 100,
             SpawnTypeId = Footman, SpawnIntervalTicks = Seconds(50),
         },
         new UnitType
         {
-            Name = "Archery Range", IsStructure = true, MaxHp = 650, Radius = Tiles(12), Cost = 120,
+            Name = "Archery Range", IsStructure = true, MaxHp = 650, Radius = Tiles(12), FootprintTiles = 2, Cost = 120,
             SpawnTypeId = Archer, SpawnIntervalTicks = Seconds(60),
         },
         new UnitType
         {
-            Name = "Kennel", IsStructure = true, MaxHp = 600, Radius = Tiles(11), Cost = 90,
+            Name = "Kennel", IsStructure = true, MaxHp = 600, Radius = Tiles(11), FootprintTiles = 2, Cost = 90,
             SpawnTypeId = Skirmisher, SpawnIntervalTicks = Seconds(35),
         },
         new UnitType
         {
-            Name = "Hunting Lodge", IsStructure = true, MaxHp = 700, Radius = Tiles(12), Cost = 140,
+            Name = "Hunting Lodge", IsStructure = true, MaxHp = 700, Radius = Tiles(12), FootprintTiles = 2, Cost = 140,
             SpawnTypeId = Hunter, SpawnIntervalTicks = Seconds(60),
         },
         new UnitType

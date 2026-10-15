@@ -5,11 +5,12 @@ using CastleFight.Sim;
 // simulation step takes. At 20 ticks per second a step has a 50 ms budget, but it must leave
 // room for rendering, so aim for well under 10 ms on the slowest machine you want to support.
 //
-//   dotnet run -c Release --project tools/CastleFight.Bench -- --units 500,1000,2000,4000 --ticks 400 --map 160x32
+//   dotnet run -c Release --project tools/CastleFight.Bench -- --units 1000,2000,4000 --ticks 400 --map three
+//   --map is single, two, three (the catalog maps) or LxW for a custom single-lane map.
 
 int[] unitsPerTeam = [500, 1000, 2000, 4000];
 int ticks = 400;
-int mapLength = 160, mapWidth = 32;
+MapDefinition map = MapCatalog.Get(MapId.SingleLane);
 ulong seed = 42;
 
 for (int i = 0; i + 1 < args.Length; i += 2)
@@ -19,10 +20,7 @@ for (int i = 0; i + 1 < args.Length; i += 2)
         case "--units": unitsPerTeam = args[i + 1].Split(',').Select(int.Parse).ToArray(); break;
         case "--ticks": ticks = int.Parse(args[i + 1]); break;
         case "--seed": seed = ulong.Parse(args[i + 1]); break;
-        case "--map":
-            var size = args[i + 1].Split('x');
-            (mapLength, mapWidth) = (int.Parse(size[0]), int.Parse(size[1]));
-            break;
+        case "--map": map = ParseMap(args[i + 1]); break;
         default: throw new ArgumentException($"Unknown option {args[i]}");
     }
 }
@@ -30,7 +28,7 @@ for (int i = 0; i + 1 < args.Length; i += 2)
 #if DEBUG
 Console.WriteLine("WARNING: Debug build. Use -c Release for meaningful numbers.");
 #endif
-Console.WriteLine($"Map {mapLength}x{mapWidth}, {ticks} ticks per run, .NET {Environment.Version}, {Environment.ProcessorCount} logical cores");
+Console.WriteLine($"Map {map.Name} ({map.LengthTiles}x{map.WidthTiles}, {map.Lanes.Count} lanes), {ticks} ticks per run, .NET {Environment.Version}, {Environment.ProcessorCount} logical cores");
 Console.WriteLine("Each run: units/team split evenly over all unit types, both armies spawned facing each other.");
 Console.WriteLine();
 
@@ -51,7 +49,7 @@ Console.WriteLine(first.SequenceEqual(second) ? $"OK, final hash {first[^1]:X16}
 
 RunResult Run(int perTeam, int tickCount, bool collectHashes = false)
 {
-    var sim = new Simulation(GameSetup.ForTeams(seed, 1), new MapLayout(mapLength, mapWidth));
+    var sim = new Simulation(GameSetup.ForTeams(seed, 1), map);
     var mobileTypes = sim.Catalog.MobileTypeIds;
     var spawn = new List<Command>();
     for (int player = 0; player < 2; player++)
@@ -78,6 +76,18 @@ RunResult Run(int perTeam, int tickCount, bool collectHashes = false)
 
     Array.Sort(times);
     return new RunResult(startAlive, sim.Units.AliveCount, times.Average(), times[(int)(tickCount * 0.95)], times[^1], hashes);
+}
+
+static MapDefinition ParseMap(string value)
+{
+    switch (value)
+    {
+        case "single": return MapCatalog.Get(MapId.SingleLane);
+        case "two": return MapCatalog.Get(MapId.TwoLanes);
+        case "three": return MapCatalog.Get(MapId.ThreeLanes);
+    }
+    var size = value.Split('x');
+    return MapCatalog.CreateLaneMap($"Custom {value}", laneCount: 1, laneWidth: int.Parse(size[1]), length: int.Parse(size[0]));
 }
 
 record RunResult(int StartAlive, int EndAlive, double Average, double P95, double Max, List<ulong> Hashes);

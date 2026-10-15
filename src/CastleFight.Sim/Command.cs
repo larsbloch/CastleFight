@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using CastleFight.Sim.FixedMath;
 
 namespace CastleFight.Sim;
 
@@ -13,15 +12,18 @@ public enum CommandKind : byte
 
 /// <summary>
 /// A player action. In lockstep multiplayer these are the only things sent over the network;
-/// invalid commands are rejected identically by every client.
+/// invalid commands are rejected identically by every client. Only integers, so the wire format is trivial.
 /// </summary>
-public readonly record struct Command(int PlayerId, CommandKind Kind, ushort TypeId, FixVec2 Position, int Count)
+/// <param name="TileX">PlaceBuilding: the footprint's lowest tile (min corner).</param>
+public readonly record struct Command(int PlayerId, CommandKind Kind, ushort TypeId, short TileX, short TileY, int Count)
 {
-    public static Command PlaceBuilding(int playerId, ushort typeId, FixVec2 position) =>
-        new(playerId, CommandKind.PlaceBuilding, typeId, position, 0);
+    public static Command PlaceBuilding(int playerId, ushort typeId, int tileX, int tileY) =>
+        new(playerId, CommandKind.PlaceBuilding, typeId, ClampToShort(tileX), ClampToShort(tileY), 0);
 
     public static Command DebugSpawn(int playerId, ushort typeId, int count) =>
-        new(playerId, CommandKind.DebugSpawn, typeId, FixVec2.Zero, count);
+        new(playerId, CommandKind.DebugSpawn, typeId, 0, 0, count);
+
+    static short ClampToShort(int value) => (short)Math.Clamp(value, short.MinValue, short.MaxValue);
 }
 
 /// <summary>

@@ -8,10 +8,11 @@ public sealed record GameSetup(ulong Seed, IReadOnlyList<byte> PlayerTeams)
 
     public int StartingGold { get; init; } = 300;
     public int IncomePerSecond { get; init; } = 10;
+    public MapId Map { get; init; } = MapId.SingleLane;
 
     /// <summary>Players 0..n-1 on team 0, n..2n-1 on team 1.</summary>
-    public static GameSetup ForTeams(ulong seed, int playersPerTeam) =>
-        new(seed, Enumerable.Range(0, playersPerTeam * 2).Select(i => (byte)(i / playersPerTeam)).ToArray());
+    public static GameSetup ForTeams(ulong seed, int playersPerTeam, MapId map = MapId.SingleLane) =>
+        new(seed, Enumerable.Range(0, playersPerTeam * 2).Select(i => (byte)(i / playersPerTeam)).ToArray()) { Map = map };
 }
 
 public sealed class Player

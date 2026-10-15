@@ -4,7 +4,6 @@ using System.Linq;
 using System.Text;
 using CastleFight.Sim;
 using CastleFight.Sim.Bots;
-using CastleFight.Sim.FixedMath;
 using Godot;
 
 namespace CastleFight.Game;
@@ -31,7 +30,9 @@ public partial class Main : Node3D
     CameraRig _cameraRig = null!;
     Label _hud = null!;
     ulong _seed = 1;
-    int _selectedBuilding;
+    int _selectedBuilding = -1;
+    MapId _map = MapId.SingleLane;
+    PlacementGhost _ghost = null!;
     bool _paused;
     double _accumulator;
     double _hudTimer;
@@ -54,19 +55,29 @@ public partial class Main : Node3D
         hudLayer.AddChild(_hud);
         AddChild(hudLayer);
 
+        _ghost = new PlacementGhost();
+        AddChild(_ghost);
+
+        // Headless smoke test: godot --headless --fixed-fps 60 --quit-after 1200 -- --smoke [--map 0|1|2]
+        var args = OS.GetCmdlineUserArgs();
+        int mapArg = Array.IndexOf(args, "--map");
+        if (mapArg >= 0 && mapArg + 1 < args.Length && byte.TryParse(args[mapArg + 1], out byte mapId) && MapCatalog.IsValid((MapId)mapId))
+            _map = (MapId)mapId;
+
         StartMatch();
-        BuildScenery(_sim.Map);
+        var scenery = new MapScenery();
+        AddChild(scenery);
+        scenery.Build(_sim.Map);
         _cameraRig.Frame(new Vector2(_sim.Map.Length.ToFloat(), _sim.Map.Width.ToFloat()));
 
-        // Headless smoke test: godot --headless --fixed-fps 60 --quit-after 1200 -- --smoke
-        _smokeTest = OS.GetCmdlineUserArgs().Contains("--smoke");
+        _smokeTest = args.Contains("--smoke");
         if (_smokeTest)
             SpawnStressWave();
     }
 
     void StartMatch()
     {
-        var setup = GameSetup.ForTeams(_seed, PlayersPerTeam);
+        var setup = GameSetup.ForTeams(_seed, PlayersPerTeam, _map);
         _sim = new Simulation(setup);
         _schedule = new CommandSchedule();
         _bots = Enumerable.Range(0, setup.PlayerTeams.Count)
@@ -98,6 +109,7 @@ public partial class Main : Node3D
         }
 
         _renderer.Draw(_sim, (float)Math.Clamp(_accumulator / TickSeconds, 0, 1));
+        _ghost.UpdatePreview(_sim, LocalPlayerId, SelectedTypeId, _cameraRig.ScreenToGround(GetViewport().GetMousePosition()));
         UpdateHud(delta);
     }
 
@@ -130,6 +142,8 @@ public partial class Main : Node3D
             int buildingIndex = (int)(key.Keycode - Key.Key1);
             if (buildingIndex >= 0 && buildingIndex < _sim.Catalog.BuildableTypeIds.Count)
                 _selectedBuilding = buildingIndex;
+            else if (key.Keycode == Key.Escape)
+                _selectedBuilding = -1;
             else if (key.Keycode == Key.Space)
                 _paused = !_paused;
             else if (key.Keycode == Key.K)
@@ -140,15 +154,21 @@ public partial class Main : Node3D
                 StartMatch();
             }
         }
+        else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right })
+        {
+            _selectedBuilding = -1;
+        }
         else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click)
         {
-            if (_cameraRig.ScreenToGround(click.Position) is not { } ground)
+            int typeId = SelectedTypeId;
+            if (typeId < 0 || _cameraRig.ScreenToGround(click.Position) is not { } ground)
                 return;
-            var position = new FixVec2(Fix.FromFloat(ground.X), Fix.FromFloat(ground.Z));
-            int typeId = _sim.Catalog.BuildableTypeIds[_selectedBuilding];
-            Issue(Command.PlaceBuilding(LocalPlayerId, (ushort)typeId, position));
+            var (tileX, tileY) = PlacementGhost.Snap(ground, _sim.Catalog[typeId].FootprintTiles);
+            Issue(Command.PlaceBuilding(LocalPlayerId, (ushort)typeId, tileX, tileY));
         }
     }
+
+    int SelectedTypeId => _selectedBuilding >= 0 ? _sim.Catalog.BuildableTypeIds[_selectedBuilding] : -1;
 
     void SpawnStressWave()
     {
@@ -182,7 +202,7 @@ public partial class Main : Node3D
             text.Append(i == _selectedBuilding ? $"  [{label}]" : $"   {label} ");
         }
         text.AppendLine();
-        text.AppendLine($"LMB place in your (blue) zone   1-{buildable.Count} select   K +{StressSpawnPerTeam} units per team   Space pause   R restart   WASD pan   Wheel zoom");
+        text.AppendLine($"1-{buildable.Count} select building, LMB place on the grid in your (blue) zone, RMB/Esc cancel   K +{StressSpawnPerTeam} units per team   Space pause   R restart   WASD pan   Wheel zoom");
 
         if (_paused)
             text.AppendLine("PAUSED");
@@ -191,44 +211,5 @@ public partial class Main : Node3D
         _hud.Text = text.ToString();
         if (_smokeTest && _sim.Tick % (Simulation.TicksPerSecond * 10) < 5)
             GD.Print(text.ToString().Split('\n')[0]);
-    }
-
-    void BuildScenery(MapLayout map)
-    {
-        var environment = new Godot.Environment
-        {
-            BackgroundMode = Godot.Environment.BGMode.Color,
-            BackgroundColor = new Color(0.11f, 0.12f, 0.15f),
-            AmbientLightSource = Godot.Environment.AmbientSource.Color,
-            AmbientLightColor = new Color(0.65f, 0.65f, 0.7f),
-            AmbientLightEnergy = 0.7f,
-        };
-        AddChild(new WorldEnvironment { Environment = environment });
-        AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.1f });
-
-        float length = map.Length.ToFloat(), width = map.Width.ToFloat();
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new PlaneMesh { Size = new Vector2(length, width), Material = new StandardMaterial3D { AlbedoColor = new Color(0.27f, 0.34f, 0.22f) } },
-            Position = new Vector3(length / 2f, 0f, width / 2f),
-        });
-
-        for (int team = 0; team < Simulation.TeamCount; team++)
-        {
-            FixRect zone = map.BuildZone(team);
-            Color tint = UnitRenderer.TeamColors[team] with { A = 0.15f };
-            var zoneMaterial = new StandardMaterial3D
-            {
-                AlbedoColor = tint,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            };
-            var size = new Vector2((zone.Max.X - zone.Min.X).ToFloat(), (zone.Max.Y - zone.Min.Y).ToFloat());
-            AddChild(new MeshInstance3D
-            {
-                Mesh = new PlaneMesh { Size = size, Material = zoneMaterial },
-                Position = new Vector3(zone.Center.X.ToFloat(), 0.02f, zone.Center.Y.ToFloat()),
-            });
-        }
     }
 }

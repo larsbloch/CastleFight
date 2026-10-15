@@ -26,7 +26,11 @@ public sealed class UnitType
     public UnitBehavior Behavior { get; init; }
 
     public int MaxHp { get; init; }
+    /// <summary>Reach and (for units) collision radius. Structures collide with their square footprint instead.</summary>
     public Fix Radius { get; init; }
+
+    /// <summary>Structures: side of the square footprint in tiles. Zero for mobile units.</summary>
+    public int FootprintTiles { get; init; }
     public Fix Speed { get; init; }
 
     /// <summary>Zero means the unit never attacks (most buildings).</summary>

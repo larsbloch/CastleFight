@@ -2,47 +2,73 @@ using CastleFight.Sim.FixedMath;
 
 namespace CastleFight.Sim;
 
+public enum PlacementResult : byte
+{
+    Ok,
+    Invalid,
+    OutsideZone,
+    Occupied,
+    NotEnoughGold,
+}
+
 /// <summary>
 /// The deterministic game state. Same <see cref="GameSetup"/> + same commands per tick gives a
 /// bit-identical state on every machine, which is what lockstep multiplayer relies on.
 /// Rules: no float/double, no System.Random, no wall-clock time, no engine calls in here.
 /// </summary>
-public sealed class Simulation
+public sealed partial class Simulation
 {
     public const int TicksPerSecond = 20;
     public const int TeamCount = 2;
 
     const int RetargetIntervalTicks = 5;
     const int MaxDebugSpawnPerCommand = 10_000;
+    const int DebugSpawnAttempts = 8;
+    const int MaxSpawnRing = 3;
     const byte NeutralOwner = byte.MaxValue;
 
     static readonly Fix GridCellSize = Fix.FromInt(2);
     static readonly Fix UnitSeparation = Fix.Half;
     static readonly Fix StructureSeparation = Fix.One;
+    static readonly Fix WallSeparation = Fix.One;
     static readonly Fix SidestepStrength = Fix.FromRatio(3, 4);
     static readonly Fix MaxSpeedFactor = Fix.FromRatio(3, 2);
     static readonly Fix SpawnGap = Fix.FromRatio(1, 4);
-    static readonly Fix BuildingGap = Fix.FromRatio(1, 2);
+    static readonly Fix SpawnJitter = Fix.FromRatio(1, 4);
+    static readonly Fix LaneEdgeMargin = Fix.Half;
 
     readonly Player[] _players;
     readonly SpatialGrid[] _teamGrids;
     readonly StructureGrid _structureGrid;
+    readonly BaseFlowField[] _flowFields;
+    readonly int[] _tileOccupant;
+    readonly Fix[] _halfFootprintOfType;
+    readonly List<int> _spawnCandidates = new();
     readonly int _incomePerSecond;
     DeterministicRandom _rng;
     FixVec2[] _velocity = [];
     bool _structuresChanged = true;
     int _nextUnitId = 1;
 
-    public Simulation(GameSetup setup, MapLayout? map = null, UnitCatalog? catalog = null)
+    /// <param name="map">Overrides the map chosen by <see cref="GameSetup.Map"/> (tests and benchmarks).</param>
+    public Simulation(GameSetup setup, MapDefinition? map = null, UnitCatalog? catalog = null)
     {
         if (setup.PlayerTeams.Count is 0 or > GameSetup.MaxPlayers)
             throw new ArgumentException($"A match needs 1 to {GameSetup.MaxPlayers} players.", nameof(setup));
 
-        Map = map ?? MapLayout.CreateDefault();
+        Map = map ?? MapCatalog.Get(setup.Map);
         Catalog = catalog ?? UnitCatalog.CreateDefault();
         Units = new UnitPool();
         _rng = new DeterministicRandom(setup.Seed);
         _incomePerSecond = setup.IncomePerSecond;
+
+        var castleType = Catalog[Catalog.CastleTypeId];
+        for (int team = 0; team < TeamCount; team++)
+        {
+            var footprint = Map.CastleFootprint(team);
+            if (footprint.Width != castleType.FootprintTiles || footprint.Height != castleType.FootprintTiles)
+                throw new ArgumentException($"The map's castle footprint does not match the {castleType.FootprintTiles}-tile castle type.");
+        }
 
         _players = new Player[setup.PlayerTeams.Count];
         for (int i = 0; i < _players.Length; i++)
@@ -53,16 +79,26 @@ public sealed class Simulation
             _players[i] = new Player(i, team, setup.StartingGold);
         }
 
+        _halfFootprintOfType = new Fix[Catalog.Count];
+        for (int id = 0; id < Catalog.Count; id++)
+            _halfFootprintOfType[id] = Fix.FromInt(Catalog[id].FootprintTiles) / 2;
+
+        _tileOccupant = new int[Map.LengthTiles * Map.WidthTiles];
         _teamGrids = new SpatialGrid[TeamCount];
+        _flowFields = new BaseFlowField[TeamCount];
         for (int team = 0; team < TeamCount; team++)
+        {
             _teamGrids[team] = new SpatialGrid(Map.Length, Map.Width, GridCellSize);
+            _flowFields[team] = new BaseFlowField(Map, team);
+        }
         _structureGrid = new StructureGrid(Map.Length, Map.Width, GridCellSize);
 
         for (byte team = 0; team < TeamCount; team++)
             SpawnUnit(Catalog.CastleTypeId, team, NeutralOwner, Map.CastlePosition(team));
+        RebuildStructureData();
     }
 
-    public MapLayout Map { get; }
+    public MapDefinition Map { get; }
     public UnitCatalog Catalog { get; }
     public UnitPool Units { get; }
     public IReadOnlyList<Player> Players => _players;
@@ -92,10 +128,7 @@ public sealed class Simulation
         for (byte team = 0; team < TeamCount; team++)
             _teamGrids[team].Rebuild(Units, team);
         if (_structuresChanged)
-        {
-            _structureGrid.Rebuild(Units, Catalog.MaxMobileRadius);
-            _structuresChanged = false;
-        }
+            RebuildStructureData();
 
         AcquireTargets();
         ComputeVelocities();
@@ -106,70 +139,66 @@ public sealed class Simulation
         Tick++;
     }
 
-    public bool CanPlaceBuilding(int playerId, int typeId, FixVec2 position)
+    /// <summary>
+    /// Whether <paramref name="playerId"/> can place <paramref name="typeId"/> with its footprint's lowest
+    /// tile at (<paramref name="tileX"/>, <paramref name="tileY"/>): enough gold, every footprint tile inside
+    /// the team's build zone and free. Adjacent buildings are fine.
+    /// </summary>
+    public bool CanPlaceBuilding(int playerId, int typeId, int tileX, int tileY) =>
+        CheckPlacement(playerId, typeId, tileX, tileY) == PlacementResult.Ok;
+
+    /// <summary>Like <see cref="CanPlaceBuilding"/>, but says why not (for the placement preview).</summary>
+    public PlacementResult CheckPlacement(int playerId, int typeId, int tileX, int tileY)
     {
         if (IsGameOver || (uint)playerId >= (uint)_players.Length || (uint)typeId >= (uint)Catalog.Count)
-            return false;
+            return PlacementResult.Invalid;
 
         var type = Catalog[typeId];
         var player = _players[playerId];
-        if (!type.IsStructure || type.IsCastle || type.Cost <= 0 || player.Gold < type.Cost)
-            return false;
-        if (!Map.BuildZone(player.Team).Inset(type.Radius).Contains(position))
-            return false;
+        if (!type.IsStructure || type.IsCastle || type.Cost <= 0)
+            return PlacementResult.Invalid;
 
-        var units = Units;
-        for (int i = 0; i < units.HighWater; i++)
+        int size = type.FootprintTiles;
+        if (!Map.BuildZone(player.Team).Contains(new TileRect(tileX, tileY, tileX + size, tileY + size)))
+            return PlacementResult.OutsideZone;
+        for (int y = tileY; y < tileY + size; y++)
         {
-            if (!units.Alive[i] || !units.IsStructure[i])
-                continue;
-            Fix minDistance = units.Radius[i] + type.Radius + BuildingGap;
-            if (FixVec2.DistanceSquared(units.Pos[i], position) < minDistance * minDistance)
-                return false;
+            for (int x = tileX; x < tileX + size; x++)
+            {
+                if (_tileOccupant[y * Map.LengthTiles + x] != 0)
+                    return PlacementResult.Occupied;
+            }
         }
-        return true;
+        return player.Gold < type.Cost ? PlacementResult.NotEnoughGold : PlacementResult.Ok;
     }
 
-    /// <summary>
-    /// Hash of the full simulation state. Clients exchange this every few ticks; a mismatch
-    /// means a desync (some code path was not deterministic).
-    /// </summary>
-    public ulong ComputeStateHash()
+    /// <summary>Slot of the structure covering the tile, or -1.</summary>
+    public int TileOccupant(int tileX, int tileY) =>
+        Map.InBounds(tileX, tileY) ? _tileOccupant[tileY * Map.LengthTiles + tileX] - 1 : -1;
+
+    /// <summary>The footprint's lowest tile for a structure of <paramref name="footprintTiles"/> centred at <paramref name="center"/>.</summary>
+    public static (int X, int Y) FootprintOrigin(FixVec2 center, int footprintTiles)
     {
-        var hash = new StateHash();
-        hash.Add(Tick);
-        hash.Add(WinningTeam);
-        hash.Add((long)_rng.State);
-        hash.Add(_nextUnitId);
-        foreach (var player in _players)
-            hash.Add(player.Gold);
+        Fix half = Fix.FromInt(footprintTiles) / 2;
+        return ((center.X - half).FloorToInt(), (center.Y - half).FloorToInt());
+    }
 
-        var u = Units;
-        hash.Add(u.HighWater);
-        for (int i = 0; i < u.HighWater; i++)
+    /// <summary>Which lane a mobile unit at <paramref name="position"/> is heading for (or walking in) right now.</summary>
+    public int LaneOf(int team, FixVec2 position)
+    {
+        if (!Map.IsInOwnBase(team, position.X))
+            return Map.NearestLane(position.Y).Index;
+
+        // Follow the flow field to the lane entrance; it is short, and this is only for tests and UI.
+        var field = _flowFields[team];
+        for (int step = 0; step < Map.LengthTiles * 2 && Map.IsInOwnBase(team, position.X); step++)
         {
-            hash.Add(u.Alive[i] ? 1 : 0);
-            if (!u.Alive[i])
-                continue;
-            hash.Add(u.Id[i]);
-            hash.Add(u.Generation[i]);
-            hash.Add(u.Type[i]);
-            hash.Add(u.Team[i]);
-            hash.Add(u.Owner[i]);
-            hash.Add(u.Pos[i].X.Raw);
-            hash.Add(u.Pos[i].Y.Raw);
-            hash.Add(u.Hp[i]);
-            hash.Add(u.Target[i]);
-            hash.Add(u.TargetGeneration[i]);
-            hash.Add(u.AttackCooldown[i]);
-            hash.Add(u.RetargetTimer[i]);
-            hash.Add(u.SpawnTimer[i]);
-            hash.Add(u.PreferredY[i].Raw);
+            FixVec2 direction = field.DirectionAt(position);
+            if (direction.IsZero)
+                break;
+            position += direction;
         }
-        foreach (int slot in u.FreeSlots)
-            hash.Add(slot);
-
-        return hash.Value;
+        return Map.NearestLane(position.Y).Index;
     }
 
     void ApplyCommand(in Command command)
@@ -181,20 +210,31 @@ public sealed class Simulation
         switch (command.Kind)
         {
             case CommandKind.PlaceBuilding:
-                if (!CanPlaceBuilding(command.PlayerId, command.TypeId, command.Position))
+                if (!CanPlaceBuilding(command.PlayerId, command.TypeId, command.TileX, command.TileY))
                     return;
-                player.Gold -= Catalog[command.TypeId].Cost;
-                SpawnUnit(command.TypeId, player.Team, (byte)player.Id, command.Position);
+                var type = Catalog[command.TypeId];
+                player.Gold -= type.Cost;
+                var center = new FixVec2(
+                    Fix.FromInt(command.TileX * 2 + type.FootprintTiles) / 2,
+                    Fix.FromInt(command.TileY * 2 + type.FootprintTiles) / 2);
+                SpawnUnit(command.TypeId, player.Team, (byte)player.Id, center);
                 break;
 
             case CommandKind.DebugSpawn:
                 if (command.TypeId >= Catalog.Count || Catalog[command.TypeId].IsStructure)
                     return;
-                FixRect area = Map.StagingArea(player.Team);
+                FixRect area = Map.StagingArea(player.Team).ToFixRect();
+                Fix radius = Catalog[command.TypeId].Radius;
                 int count = Math.Clamp(command.Count, 0, MaxDebugSpawnPerCommand);
                 for (int k = 0; k < count; k++)
                 {
-                    var position = new FixVec2(_rng.NextFix(area.Min.X, area.Max.X), _rng.NextFix(area.Min.Y, area.Max.Y));
+                    FixVec2 position = default;
+                    for (int attempt = 0; attempt < DebugSpawnAttempts; attempt++)
+                    {
+                        position = new FixVec2(_rng.NextFix(area.Min.X, area.Max.X), _rng.NextFix(area.Min.Y, area.Max.Y));
+                        if (!Map.IsInsideWall(position, radius))
+                            break;
+                    }
                     SpawnUnit(command.TypeId, player.Team, (byte)player.Id, position);
                 }
                 break;
@@ -211,6 +251,8 @@ public sealed class Simulation
         position = new FixVec2(
             Fix.Clamp(position.X, type.Radius, Map.Length - type.Radius),
             Fix.Clamp(position.Y, type.Radius, Map.Width - type.Radius));
+        if (!type.IsStructure)
+            position = Map.ResolveWalls(position, type.Radius);
 
         u.Id[slot] = id;
         u.Type[slot] = (ushort)typeId;
@@ -227,13 +269,33 @@ public sealed class Simulation
         u.AttackCooldown[slot] = 0;
         u.RetargetTimer[slot] = 1 + id % RetargetIntervalTicks; // stagger target searches across ticks
         u.SpawnTimer[slot] = type.SpawnIntervalTicks;
-        u.PreferredY[slot] = type.Behavior == UnitBehavior.Spreader
-            ? _rng.NextFix(type.Radius, Map.Width - type.Radius)
-            : position.Y;
+        u.SpreadFraction[slot] = type.Behavior == UnitBehavior.Spreader ? _rng.NextFix(Fix.Zero, Fix.One) : Fix.Half;
 
         if (type.IsStructure)
+        {
+            MarkFootprint(slot, slot + 1);
             _structuresChanged = true;
+        }
         return slot;
+    }
+
+    void MarkFootprint(int slot, int value)
+    {
+        int size = Catalog[Units.Type[slot]].FootprintTiles;
+        var (originX, originY) = FootprintOrigin(Units.Pos[slot], size);
+        for (int y = Math.Max(originY, 0); y < Math.Min(originY + size, Map.WidthTiles); y++)
+        {
+            for (int x = Math.Max(originX, 0); x < Math.Min(originX + size, Map.LengthTiles); x++)
+                _tileOccupant[y * Map.LengthTiles + x] = value;
+        }
+    }
+
+    void RebuildStructureData()
+    {
+        _structureGrid.Rebuild(Units, Catalog.MaxMobileRadius);
+        foreach (var field in _flowFields)
+            field.Rebuild(_tileOccupant);
+        _structuresChanged = false;
     }
 
     void RunSpawners()
@@ -250,12 +312,64 @@ public sealed class Simulation
                 continue;
 
             u.SpawnTimer[i] = type.SpawnIntervalTicks;
-            var spawnType = Catalog[type.SpawnTypeId];
             byte team = u.Team[i];
-            Fix structureRadius = u.Radius[i];
-            FixVec2 ahead = Map.LaneDirection(team) * (structureRadius + spawnType.Radius + SpawnGap);
-            var sideways = new FixVec2(Fix.Zero, _rng.NextFix(-structureRadius, structureRadius));
-            SpawnUnit(type.SpawnTypeId, team, u.Owner[i], u.Pos[i] + ahead + sideways);
+            SpawnUnit(type.SpawnTypeId, team, u.Owner[i], FindSpawnPoint(i, type, Catalog[type.SpawnTypeId].Radius));
+        }
+    }
+
+    /// <summary>
+    /// A free tile just outside the structure's footprint, preferring the side facing the enemy. Buildings
+    /// packed together therefore spawn into the nearest gap instead of inside a neighbour.
+    /// </summary>
+    FixVec2 FindSpawnPoint(int structure, UnitType structureType, Fix spawnRadius)
+    {
+        var u = Units;
+        byte team = u.Team[structure];
+        int size = structureType.FootprintTiles;
+        var (originX, originY) = FootprintOrigin(u.Pos[structure], size);
+        var candidates = _spawnCandidates;
+
+        for (int ring = 1; ring <= MaxSpawnRing; ring++)
+        {
+            int minX = originX - ring, maxX = originX + size - 1 + ring;
+            int minY = originY - ring, maxY = originY + size - 1 + ring;
+            int frontX = team == 0 ? maxX : minX;
+
+            // Front column first; only if it is full, any other tile of the ring.
+            candidates.Clear();
+            for (int y = minY; y <= maxY; y++)
+                AddIfFree(frontX, y);
+            if (candidates.Count == 0)
+            {
+                for (int x = minX; x <= maxX; x++)
+                {
+                    if (x == frontX)
+                        continue;
+                    AddIfFree(x, minY);
+                    AddIfFree(x, maxY);
+                    if (x == minX || x == maxX)
+                    {
+                        for (int y = minY + 1; y < maxY; y++)
+                            AddIfFree(x, y);
+                    }
+                }
+            }
+            if (candidates.Count == 0)
+                continue;
+
+            int tile = candidates[_rng.NextInt(candidates.Count)];
+            int tileX = tile % Map.LengthTiles, tileY = tile / Map.LengthTiles;
+            return new FixVec2(Fix.FromInt(tileX) + Fix.Half, Fix.FromInt(tileY) + Fix.Half + _rng.NextFix(-SpawnJitter, SpawnJitter));
+        }
+
+        // Completely walled in: spawn in front anyway and let separation sort it out.
+        Fix distance = _halfFootprintOfType[u.Type[structure]] + spawnRadius + SpawnGap;
+        return u.Pos[structure] + Map.Forward(team) * distance;
+
+        void AddIfFree(int x, int y)
+        {
+            if (Map.InBounds(x, y) && _tileOccupant[y * Map.LengthTiles + x] == 0 && !Map.IsWallTile(x, y))
+                candidates.Add(y * Map.LengthTiles + x);
         }
     }
 
@@ -297,11 +411,12 @@ public sealed class Simulation
     /// <summary>
     /// Nearest enemy within aggro range, searching the enemy grid in rings of cells outwards and
     /// stopping as soon as no unvisited ring can hold anything closer. Hunters keep searching the
-    /// full range for their preferred type.
+    /// full range for their preferred type. Nothing is seen through walls.
     /// </summary>
     int FindTarget(int self, UnitType selfType)
     {
         var u = Units;
+        var map = Map;
         var grid = _teamGrids[1 - u.Team[self]];
         var positions = u.Pos;
         var radii = u.Radius;
@@ -309,6 +424,7 @@ public sealed class Simulation
         FixVec2 origin = positions[self];
         Fix aggroReach = selfType.AggroRange + radii[self];
         int preferredType = selfType.Behavior == UnitBehavior.Hunter ? selfType.PreferredTargetTypeId : -1;
+        bool checkWalls = map.Walls.Count > 0;
 
         int centerX = grid.CellX(origin.X);
         int centerY = grid.CellY(origin.Y);
@@ -350,12 +466,18 @@ public sealed class Simulation
                 Fix distanceSq = FixVec2.DistanceSquared(origin, positions[candidate]);
                 if (distanceSq > reach * reach)
                     continue;
-                if (distanceSq < bestDistanceSq)
+                bool closer = distanceSq < bestDistanceSq;
+                bool closerPreferred = types[candidate] == preferredType && distanceSq < bestPreferredDistanceSq;
+                if (!closer && !closerPreferred)
+                    continue;
+                if (checkWalls && map.SegmentCrossesWall(origin, positions[candidate]))
+                    continue;
+                if (closer)
                 {
                     bestDistanceSq = distanceSq;
                     best = candidate;
                 }
-                if (types[candidate] == preferredType && distanceSq < bestPreferredDistanceSq)
+                if (closerPreferred)
                 {
                     bestPreferredDistanceSq = distanceSq;
                     bestPreferred = candidate;
@@ -372,7 +494,7 @@ public sealed class Simulation
     }
 
     /// <summary>
-    /// Desired movement (chase target, or march down the lane) plus soft separation from
+    /// Desired movement (chase target, or march towards the enemy) plus soft separation from
     /// neighbours. Units never block each other hard; they get pushed apart and slide around
     /// anything in their way. Velocities are computed for everyone before anyone moves, so the
     /// result does not depend on update order.
@@ -390,7 +512,7 @@ public sealed class Simulation
         var types = u.Type;
         var teams = u.Team;
         var targets = u.Target;
-        var preferredY = u.PreferredY;
+        var spreadFraction = u.SpreadFraction;
         var ids = u.Id;
         Fix maxMobileRadius = Catalog.MaxMobileRadius;
 
@@ -420,13 +542,8 @@ public sealed class Simulation
             }
             else
             {
-                heading = Map.LaneDirection(teams[i]);
-                desired = heading * type.Speed;
-                if (type.Behavior == UnitBehavior.Spreader)
-                {
-                    Fix maxSideways = type.Speed * type.SpreadFactor;
-                    desired += new FixVec2(Fix.Zero, Fix.Clamp(preferredY[i] - position.Y, -maxSideways, maxSideways));
-                }
+                heading = MarchHeading(teams[i], position, radius, type, spreadFraction[i], out Fix sideways);
+                desired = heading * type.Speed + new FixVec2(Fix.Zero, sideways);
             }
 
             FixVec2 push = FixVec2.Zero;
@@ -451,14 +568,77 @@ public sealed class Simulation
                 }
             }
 
+            // Structures are square: separate from the closest point of the footprint.
             foreach (int structure in _structureGrid.At(position))
             {
-                Separate(position, radius, ids[i], positions[structure], radii[structure], ids[structure],
-                    heading, StructureSeparation, ref push, ref sidestep);
+                FixVec2 center = positions[structure];
+                Fix half = _halfFootprintOfType[types[structure]];
+                var closest = new FixVec2(
+                    Fix.Clamp(position.X, center.X - half, center.X + half),
+                    Fix.Clamp(position.Y, center.Y - half, center.Y + half));
+                if (closest == position) // centre inside the footprint: push out from the middle
+                    Separate(position, radius, ids[i], center, half + half, ids[structure], heading, StructureSeparation, ref push, ref sidestep);
+                else
+                    Separate(position, radius, ids[i], closest, Fix.Zero, ids[structure], heading, StructureSeparation, ref push, ref sidestep);
             }
+
+            if (Map.TryNearestWallPoint(position, radius, out FixVec2 wallPoint))
+                Separate(position, radius, ids[i], wallPoint, Fix.Zero, int.MaxValue, heading, WallSeparation, ref push, ref sidestep);
 
             _velocity[i] = (desired + push + sidestep).ClampLength(type.Speed * MaxSpeedFactor);
         }
+    }
+
+    /// <summary>
+    /// Where a unit with nothing to fight walks. In its own base it follows the flow field to the nearest
+    /// lane entrance; inside a lane it walks straight on, staying off the walls; past the lanes it heads for
+    /// the enemy castle. All targets are bands rather than points, so crowds never converge on one spot.
+    /// </summary>
+    FixVec2 MarchHeading(byte team, FixVec2 position, Fix radius, UnitType type, Fix spreadFraction, out Fix sideways)
+    {
+        sideways = Fix.Zero;
+        FixVec2 forward = Map.Forward(team);
+
+        if (Map.IsInOwnBase(team, position.X))
+        {
+            FixVec2 flow = _flowFields[team].DirectionAt(position);
+            return flow.IsZero ? forward : flow;
+        }
+
+        if (!Map.IsPastLanes(team, position.X))
+        {
+            var lane = Map.NearestLane(position.Y);
+            Fix margin = radius + LaneEdgeMargin;
+            Fix low = Fix.FromInt(lane.MinY) + margin, high = Fix.FromInt(lane.MaxY) - margin;
+            if (low > high)
+                low = high = Fix.FromInt(lane.MinY + lane.MaxY) / 2;
+
+            if (type.Behavior == UnitBehavior.Spreader)
+            {
+                Fix preferredY = low + (high - low) * spreadFraction;
+                Fix maxSideways = type.Speed * type.SpreadFactor;
+                sideways = Fix.Clamp(preferredY - position.Y, -maxSideways, maxSideways);
+            }
+
+            Fix exitX = Fix.FromInt(team == 0 ? Map.LaneMaxX : Map.LaneMinX);
+            return TowardBand(position, exitX, low, high, forward);
+        }
+
+        var castle = Map.CastleFootprint(1 - team);
+        Fix castleX = castle.Center.X;
+        Fix castleLow = Fix.FromInt(castle.MinY), castleHigh = Fix.FromInt(castle.MaxY);
+        var towardsCastle = new FixVec2(castleX >= position.X ? Fix.One : -Fix.One, Fix.Zero);
+        return TowardBand(position, castleX, castleLow, castleHigh, towardsCastle);
+    }
+
+    /// <summary>Straight along <paramref name="straight"/> when already inside [low, high], else towards the nearest point of the band at <paramref name="gateX"/>.</summary>
+    static FixVec2 TowardBand(FixVec2 position, Fix gateX, Fix low, Fix high, FixVec2 straight)
+    {
+        Fix targetY = Fix.Clamp(position.Y, low, high);
+        if (targetY == position.Y)
+            return straight;
+        var toGate = new FixVec2(gateX - position.X, targetY - position.Y);
+        return toGate.Normalized();
     }
 
     static void Separate(FixVec2 position, Fix radius, int id, FixVec2 otherPosition, Fix otherRadius, int otherId,
@@ -505,6 +685,7 @@ public sealed class Simulation
         var positions = u.Pos;
         var velocities = u.Vel;
         var radii = u.Radius;
+        var map = Map;
 
         for (int i = 0; i < u.HighWater; i++)
         {
@@ -515,9 +696,10 @@ public sealed class Simulation
             FixVec2 next = positions[i] + velocity;
             Fix radius = radii[i];
             velocities[i] = velocity;
-            positions[i] = new FixVec2(
-                Fix.Clamp(next.X, radius, Map.Length - radius),
-                Fix.Clamp(next.Y, radius, Map.Width - radius));
+            next = new FixVec2(
+                Fix.Clamp(next.X, radius, map.Length - radius),
+                Fix.Clamp(next.Y, radius, map.Width - radius));
+            positions[i] = map.ResolveWalls(next, radius);
         }
     }
 
@@ -561,6 +743,7 @@ public sealed class Simulation
 
             if (u.IsStructure[i])
             {
+                MarkFootprint(i, 0);
                 _structuresChanged = true;
                 if (Catalog[u.Type[i]].IsCastle && !IsGameOver)
                     WinningTeam = 1 - u.Team[i];
@@ -569,19 +752,29 @@ public sealed class Simulation
         }
     }
 
-    struct StateHash
+    /// <summary>Rebuilds tile occupancy from the live structures and compares (tests: it is derived state, never hashed).</summary>
+    internal bool ValidateOccupancy()
     {
-        ulong _value;
-
-        public StateHash() => _value = 14695981039346656037UL;
-
-        public void Add(long value)
+        var expected = new int[_tileOccupant.Length];
+        var u = Units;
+        for (int i = 0; i < u.HighWater; i++)
         {
-            _value ^= (ulong)value;
-            _value *= 0x9E3779B97F4A7C15UL;
-            _value ^= _value >> 32;
+            if (!u.Alive[i] || !u.IsStructure[i])
+                continue;
+            int size = Catalog[u.Type[i]].FootprintTiles;
+            var (originX, originY) = FootprintOrigin(u.Pos[i], size);
+            for (int y = originY; y < originY + size; y++)
+            {
+                for (int x = originX; x < originX + size; x++)
+                {
+                    if (expected[y * Map.LengthTiles + x] != 0)
+                        return false; // two structures on one tile
+                    expected[y * Map.LengthTiles + x] = i + 1;
+                }
+            }
         }
-
-        public readonly ulong Value => _value;
+        return expected.AsSpan().SequenceEqual(_tileOccupant);
     }
+
+    internal BaseFlowField FlowField(int team) => _flowFields[team];
 }
