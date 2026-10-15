@@ -21,11 +21,13 @@ public sealed class NetWriter
     public void WriteUInt64(ulong value) => BinaryPrimitives.WriteUInt64LittleEndian(Reserve(8), value);
     public void WriteGuid(Guid value) => value.TryWriteBytes(Reserve(16));
 
-    /// <summary>u8 byte length + UTF-8, cut to <see cref="ProtocolInfo.MaxStringBytes"/> bytes.</summary>
-    public void WriteString(string value)
+    /// <summary>u8 byte length + UTF-8, cut to <paramref name="maxBytes"/> (at most 255) without splitting a character.</summary>
+    public void WriteString(string value, int maxBytes = ProtocolInfo.MaxStringBytes)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(value);
-        int length = Math.Min(bytes.Length, ProtocolInfo.MaxStringBytes);
+        int length = Math.Min(bytes.Length, Math.Min(maxBytes, byte.MaxValue));
+        while (length > 0 && length < bytes.Length && (bytes[length] & 0xC0) == 0x80)
+            length--; // bytes[length] continues a multi-byte character: cut before that character
         WriteByte((byte)length);
         bytes.AsSpan(0, length).CopyTo(Reserve(length));
     }

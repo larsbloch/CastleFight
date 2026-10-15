@@ -5,12 +5,14 @@ namespace CastleFight.Net.Protocol;
 public static class ProtocolInfo
 {
     /// <summary>Bump on any wire-format or simulation-rule change; mismatched clients are rejected.</summary>
-    public const ushort Version = 1;
+    public const ushort Version = 2;
 
     public const int DefaultPort = 7777;
     public const string ConnectionKey = "CastleFight";
     public const int MaxStringBytes = 48;
     public const int MaxNameLength = 24;
+    public const int MaxChatBytes = 255;
+    public const int MaxChatLength = 120;
     public const int MaxCommandsPerInput = 64;
     public const int MaxCommandsPerBundle = 1024;
     public const int TeamCapacity = GameSetup.MaxPlayers / Simulation.TeamCount;
@@ -41,6 +43,8 @@ public enum MessageType : byte
     StateHash,
     Desync,
     PlayerLeft,
+    SendChat,
+    Chat,
 }
 
 public enum RejectReason : byte
@@ -103,6 +107,8 @@ public abstract record Message
             MessageType.StateHash => new StateHashMessage(reader.ReadInt32(), reader.ReadUInt64()),
             MessageType.Desync => DesyncMessage.Read(ref reader),
             MessageType.PlayerLeft => new PlayerLeftMessage(reader.ReadByte()),
+            MessageType.SendChat => new SendChatMessage(reader.ReadString()),
+            MessageType.Chat => new ChatMessage(reader.ReadByte(), reader.ReadByte(), reader.ReadString(), reader.ReadString()),
             _ => throw new ProtocolException($"Unknown message type {(byte)type}."),
         };
         reader.ExpectEnd();
@@ -392,4 +398,33 @@ public sealed record PlayerLeftMessage(byte PlayerId) : Message
 {
     public override MessageType Type => MessageType.PlayerLeft;
     protected override void WritePayload(NetWriter writer) => writer.WriteByte(PlayerId);
+}
+
+/// <summary>C→S: a line of lobby chat.</summary>
+public sealed record SendChatMessage(string Text) : Message
+{
+    public override MessageType Type => MessageType.SendChat;
+    protected override void WritePayload(NetWriter writer) => writer.WriteString(Text, ProtocolInfo.MaxChatBytes);
+}
+
+/// <summary>
+/// S→all: a lobby chat line. <see cref="Slot"/> is <see cref="SystemSlot"/> for the relay's own notices (joins,
+/// leaves, host changes). The sender's name and team are included because they may have left before it is shown.
+/// </summary>
+public sealed record ChatMessage(byte Slot, byte Team, string Name, string Text) : Message
+{
+    public const byte SystemSlot = byte.MaxValue;
+
+    public override MessageType Type => MessageType.Chat;
+    public bool IsSystem => Slot == SystemSlot;
+
+    public static ChatMessage Notice(string text) => new(SystemSlot, 0, "", text);
+
+    protected override void WritePayload(NetWriter writer)
+    {
+        writer.WriteByte(Slot);
+        writer.WriteByte(Team);
+        writer.WriteString(Name);
+        writer.WriteString(Text, ProtocolInfo.MaxChatBytes);
+    }
 }

@@ -12,21 +12,31 @@ using Godot;
 namespace CastleFight.Game;
 
 /// <summary>
-/// Root of the game (Main.tscn). Switches between the main menu, the lobby and a match, and owns the
-/// network connection plus, when hosting, the in-process relay.
+/// Root of the game (Main.tscn). Switches between the menus, the lobby and a match, and owns the network
+/// connection plus, when hosting, the in-process relay.
 /// </summary>
 public partial class App : Node
 {
+    /// <summary>Menus are laid out for this size and scaled to the window; matches render at native size.</summary>
+    static readonly Vector2I MenuBaseSize = new(1600, 900);
+
+    /// <summary>What the host asked for in the setup screen, applied once the lobby is open.</summary>
+    sealed record LobbySetup(MapId? Map, int BlueBots, int RedBots, bool Ready);
+
     LaunchOptions _options = null!;
     Settings _settings = null!;
+    Control _menuRoot = null!;
     Node? _screen;
     LockstepClient? _client;
     RelayHost? _relay;
-    string _where = "";
+    LobbySetup? _pendingSetup;
+    bool _sayDone;
     ulong _seed = 1;
-    MapId _singlePlayerMap;
-    int _singlePlayerTeamSize;
-    bool _autoStartSetupDone;
+    (MapId Map, int BlueBots, int RedBots) _offline;
+    int _frames;
+
+    /// <summary>Where to go when the connection fails or the player leaves the lobby.</summary>
+    Action<string?> _back = null!;
 
     public override void _Ready()
     {
@@ -34,15 +44,41 @@ public partial class App : Node
         _settings = Settings.Load();
         if (_options.Name is { } name)
             _settings.PlayerName = Settings.CleanName(name);
+        if (_options.ScreenshotPath is null && !_options.SkipMenu)
+            _settings.ApplyDisplay();
+
+        // Themes pass down through Controls only, so the menus live under one themed full-screen Control.
+        _menuRoot = new Control { Theme = UiTheme.Build(), MouseFilter = Control.MouseFilterEnum.Ignore };
+        _menuRoot.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        AddChild(_menuRoot);
+        _menuRoot.AddChild(new Backdrop());
+        _back = ShowMainMenu;
 
         if (_options.Host)
+        {
+            _pendingSetup = new LobbySetup(_options.Map, (_options.Bots + 1) / 2, _options.Bots / 2, false);
             Host(_options.Port);
+        }
         else if (_options.JoinAddress is { } address)
+        {
+            _pendingSetup = new LobbySetup(null, 0, 0, _options.Ready);
             Join(address, _options.Port);
+        }
         else if (_options.SkipMenu)
-            StartSinglePlayer(_options.Map ?? MapId.SingleLane, _options.PlayersPerTeam);
+        {
+            int perTeam = _options.PlayersPerTeam;
+            StartOffline(_options.Map ?? MapId.SingleLane, perTeam - 1, perTeam);
+        }
         else
-            ShowMainMenu();
+        {
+            switch (_options.Screen)
+            {
+                case "host": ShowHostSetup(); break;
+                case "join": ShowJoin(); break;
+                case "options": ShowOptions(); break;
+                default: ShowMainMenu(); break;
+            }
+        }
     }
 
     public override void _Process(double delta)
@@ -51,13 +87,20 @@ public partial class App : Node
         if (_client is not null && _screen is not MatchView)
         {
             _client.Poll();
+            ApplyLobbySetup();
             if (_options.SkipMenu)
-                AutoLobby();
+                AutoStart();
         }
         if (_relay?.Error is { } error)
         {
             _relay = null;
-            ShowMainMenu($"The relay stopped: {error.Message}");
+            ShowHostSetup($"The relay stopped: {error.Message}");
+        }
+        if (_options.ScreenshotPath is { } path && ++_frames == _options.ScreenshotFrames)
+        {
+            GetViewport().GetTexture().GetImage().SavePng(path);
+            GD.Print($"Screenshot saved to {path}");
+            GetTree().Quit();
         }
     }
 
@@ -67,11 +110,17 @@ public partial class App : Node
     {
         if (_screen is not null)
         {
-            RemoveChild(_screen);
+            _screen.GetParent().RemoveChild(_screen);
             _screen.QueueFree();
         }
         _screen = screen;
-        AddChild(screen);
+        bool menu = screen is Control;
+        _menuRoot.Visible = menu;
+        var root = GetTree().Root;
+        root.ContentScaleMode = menu ? Window.ContentScaleModeEnum.CanvasItems : Window.ContentScaleModeEnum.Disabled;
+        root.ContentScaleAspect = Window.ContentScaleAspectEnum.Expand;
+        root.ContentScaleSize = MenuBaseSize;
+        (menu ? (Node)_menuRoot : this).AddChild(screen);
     }
 
     void ShowMainMenu(string? status = null)
@@ -79,44 +128,64 @@ public partial class App : Node
         CloseNetwork();
         var menu = new MainMenu();
         menu.Build(_settings, status);
-        menu.SinglePlayerRequested += (map, teamSize) =>
-        {
-            RememberName(menu.PlayerName);
-            StartSinglePlayer(map, teamSize);
-        };
-        menu.HostRequested += port =>
-        {
-            RememberName(menu.PlayerName);
-            _settings.Port = port;
-            Host(port);
-        };
-        menu.JoinRequested += (address, port) =>
-        {
-            RememberName(menu.PlayerName);
-            if (address.Length == 0)
-            {
-                menu.ShowStatus("Enter the host's address.");
-                return;
-            }
-            _settings.Address = address;
-            _settings.Port = port;
-            Join(address, port);
-        };
+        menu.HostRequested += () => ShowHostSetup();
+        menu.JoinRequested += () => ShowJoin();
+        menu.OptionsRequested += ShowOptions;
         menu.QuitRequested += () => GetTree().Quit();
         ShowScreen(menu);
     }
 
-    void RememberName(string name)
+    void ShowHostSetup(string? status = null)
     {
-        _settings.PlayerName = Settings.CleanName(name);
-        _settings.Save();
+        CloseNetwork();
+        var screen = new HostScreen();
+        screen.Build(_settings, status);
+        screen.BackRequested += () => ShowMainMenu();
+        screen.OpenLobbyRequested += () =>
+        {
+            _settings.Save();
+            _pendingSetup = new LobbySetup(_settings.HostMap, _settings.HostBlueBots, _settings.HostRedBots, false);
+            Host(_settings.HostPort);
+        };
+        screen.PlayOfflineRequested += () =>
+        {
+            _settings.Save();
+            StartOffline(_settings.HostMap, _settings.HostBlueBots, _settings.HostRedBots);
+        };
+        ShowScreen(screen);
     }
 
-    void StartSinglePlayer(MapId map, int playersPerTeam)
+    void ShowJoin(string? status = null)
     {
-        _singlePlayerMap = map;
-        _singlePlayerTeamSize = playersPerTeam;
-        var setup = GameSetup.ForTeams(_seed, playersPerTeam, map);
+        CloseNetwork();
+        var screen = new JoinScreen();
+        screen.Build(_settings, status);
+        screen.BackRequested += () => ShowMainMenu();
+        screen.JoinRequested += (address, port) =>
+        {
+            _settings.AddRecent(address, port);
+            _settings.Save();
+            _pendingSetup = null;
+            Join(address, port);
+        };
+        ShowScreen(screen);
+    }
+
+    void ShowOptions()
+    {
+        var screen = new OptionsScreen();
+        screen.Build(_settings);
+        screen.BackRequested += () => ShowMainMenu();
+        ShowScreen(screen);
+    }
+
+    /// <summary>Single player against bots on this PC: you, your bot allies, then the enemy bots.</summary>
+    void StartOffline(MapId map, int blueBots, int redBots)
+    {
+        CloseNetwork();
+        _offline = (map, blueBots, redBots);
+        byte[] teams = [0, .. Enumerable.Repeat((byte)0, blueBots), .. Enumerable.Repeat((byte)1, redBots)];
+        var setup = new GameSetup(_seed, teams) { Map = map };
         ShowMatch(new LocalSession(setup, localPlayerId: 0));
     }
 
@@ -128,7 +197,7 @@ public partial class App : Node
         view.RestartRequested += () =>
         {
             _seed++;
-            StartSinglePlayer(_singlePlayerMap, _singlePlayerTeamSize);
+            StartOffline(_offline.Map, _offline.BlueBots, _offline.RedBots);
         };
         ShowScreen(view);
     }
@@ -144,22 +213,23 @@ public partial class App : Node
         }
         catch (Exception ex)
         {
-            ShowMainMenu($"Could not host: {ex.Message}");
+            ShowHostSetup($"Could not host on port {port}: {ex.Message}");
             return;
         }
-        Connect("127.0.0.1", _relay.Port, $"your game on port {_relay.Port}");
+        _back = status => ShowHostSetup(status);
+        Connect("127.0.0.1", _relay.Port, $"Your game on port {_relay.Port}");
     }
 
     void Join(string address, int port)
     {
         CloseNetwork();
+        _back = status => ShowJoin(status);
         Connect(address, port, $"{address}:{port}");
     }
 
     void Connect(string address, int port, string where)
     {
-        _where = where;
-        _autoStartSetupDone = false;
+        _sayDone = false;
         LiteNetClientTransport transport;
         try
         {
@@ -167,7 +237,7 @@ public partial class App : Node
         }
         catch (Exception ex)
         {
-            ShowMainMenu($"Could not connect: {ex.Message}");
+            _back($"Could not connect: {ex.Message}");
             return;
         }
 
@@ -176,46 +246,55 @@ public partial class App : Node
         client.GameStarted += _ => ShowMatch(new NetworkSession(client, autoPlayLocal: _options.AutoPlay));
         client.Disconnected += reason =>
         {
-            // In a match the view shows the error; in the lobby we go back to the menu.
+            // In a match the view shows the error; in the lobby we go back.
             if (_screen is not MatchView)
-                ShowMainMenu(client.State == ClientState.Rejected ? $"Rejected: {reason}" : $"Disconnected: {reason}");
+                _back(client.State == ClientState.Rejected ? $"Rejected: {reason}" : $"Disconnected: {reason}");
         };
 
         var lobby = new LobbyScreen();
         lobby.Build(client, where);
-        lobby.LeaveRequested += () => ShowMainMenu();
+        lobby.LeaveRequested += () => _back(null);
         ShowScreen(lobby);
     }
 
-    /// <summary>Command-line lobby automation (--bots, --autostart, --ready) for multi-window and headless tests.</summary>
-    void AutoLobby()
+    /// <summary>Once in the lobby: the host's map and bots from the setup screen (or command line), and --ready / --say.</summary>
+    void ApplyLobbySetup()
     {
-        if (_client is not { State: ClientState.Lobby, Lobby: { } lobby })
+        if (_client is not { State: ClientState.Lobby, Lobby: not null })
             return;
-
-        if (!_autoStartSetupDone)
+        if (!_sayDone && _options.Say is { } say)
         {
-            _autoStartSetupDone = true;
-            if (_client.IsHost)
+            _sayDone = true;
+            _client.SendChat(say);
+        }
+        if (_pendingSetup is not { } setup)
+            return;
+        _pendingSetup = null;
+        if (_client.IsHost)
+        {
+            if (setup.Map is { } map)
+                _client.SetMap(map);
+            for (int i = 0; i < Math.Max(setup.BlueBots, setup.RedBots); i++)
             {
-                if (_options.Map is { } map)
-                    _client.SetMap(map);
-                for (int i = 0; i < _options.Bots; i++)
-                    _client.AddBot(i % Simulation.TeamCount);
-            }
-            else if (_options.Ready)
-            {
-                _client.SetReady(true);
+                if (i < setup.BlueBots)
+                    _client.AddBot(0);
+                if (i < setup.RedBots)
+                    _client.AddBot(1);
             }
         }
+        if (setup.Ready)
+            _client.SetReady(true);
+    }
 
-        if (_client.IsHost && _options.AutoStartPlayers > 0)
-        {
-            int humans = lobby.Slots.Count(s => s.Kind == SlotKind.Human);
-            bool everyoneReady = lobby.Slots.Where((s, i) => s.Kind == SlotKind.Human && i != lobby.HostSlot).All(s => s.Ready);
-            if (humans >= _options.AutoStartPlayers && everyoneReady)
-                _client.StartGame();
-        }
+    /// <summary>--autostart N: the host starts once N humans are in and everyone is ready (multi-window and headless tests).</summary>
+    void AutoStart()
+    {
+        if (_client is not { State: ClientState.Lobby, IsHost: true, Lobby: { } lobby } || _options.AutoStartPlayers <= 0)
+            return;
+        int humans = lobby.Slots.Count(s => s.Kind == SlotKind.Human);
+        bool everyoneReady = lobby.Slots.Where((s, i) => s.Kind == SlotKind.Human && i != lobby.HostSlot).All(s => s.Ready);
+        if (humans >= _options.AutoStartPlayers && everyoneReady)
+            _client.StartGame();
     }
 
     void CloseNetwork()

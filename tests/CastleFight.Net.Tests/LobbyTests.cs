@@ -68,7 +68,7 @@ public class LobbyTests
         host.SetMap(MapId.ThreeLanes);
         host.AddBot(1);
         host.StartGame();
-        Assert.True(net.RunUntil(() => guest.State == ClientState.InGame));
+        Assert.True(net.RunUntil(() => guest.State == ClientState.InGame && host.State == ClientState.InGame));
         Assert.Equal(MapId.ThreeLanes, guest.Start!.Map);
         Assert.Equal(MapId.ThreeLanes, guest.Start.ToSetup().Map);
         Assert.Equal(3, guest.Start.Players.Length);
@@ -104,6 +104,66 @@ public class LobbyTests
         host.Leave();
         Assert.True(net.RunUntil(() => guest.Lobby?.Slots.Count(s => s.Kind == SlotKind.Human) == 1));
         Assert.True(guest.IsHost);
+    }
+
+    [Fact]
+    public void Chat_reaches_everyone_with_the_senders_name_and_team()
+    {
+        using var net = LowLatency();
+        var host = net.Join("Host");
+        var guest = net.Join("Guest");
+        net.RunUntil(() => guest.Lobby?.Slots.Count(s => s.Kind == SlotKind.Human) == 2);
+
+        guest.SendChat("  hello\nthere  ");
+        guest.SendChat("   ");
+        Assert.True(net.RunUntil(() => host.Chat.Any(c => !c.IsSystem)));
+        net.Run(200);
+
+        foreach (var client in new[] { host, guest })
+        {
+            var line = Assert.Single(client.Chat, c => !c.IsSystem);
+            Assert.Equal("hello there", line.Text); // one trimmed line; the blank message was dropped
+            Assert.Equal("Guest", line.Name);
+            Assert.Equal(guest.LocalSlot, line.Slot);
+            Assert.Equal(1, line.Team);
+        }
+
+        guest.SendChat(new string('a', 200));
+        Assert.True(net.RunUntil(() => host.Chat.Count(c => !c.IsSystem) == 2));
+        Assert.Equal(ProtocolInfo.MaxChatLength, host.Chat[^1].Text.Length);
+    }
+
+    [Fact]
+    public void The_relay_announces_joins_leaves_and_host_changes_in_the_chat()
+    {
+        using var net = LowLatency();
+        var host = net.Join("Host");
+        net.RunUntil(() => host.State == ClientState.Lobby);
+        var guest = net.Join("Guest");
+        var third = net.Join("Third");
+        net.RunUntil(() => third.Lobby?.Slots.Count(s => s.Kind == SlotKind.Human) == 3);
+
+        host.Leave();
+        Assert.True(net.RunUntil(() => guest.Chat.Any(c => c.Text.Contains("now the host"))));
+
+        Assert.All(guest.Chat, c => Assert.True(c.IsSystem));
+        Assert.Equal(["Guest joined.", "Third joined.", "Host left.", "Guest is now the host."], guest.Chat.Select(c => c.Text));
+        Assert.Equal("Host opened the lobby.", host.Chat[0].Text);
+    }
+
+    [Fact]
+    public void Chat_is_not_relayed_once_the_game_runs()
+    {
+        using var net = LowLatency();
+        var host = net.Join("Host");
+        net.RunUntil(() => host.State == ClientState.Lobby);
+        host.StartGame();
+        Assert.True(net.RunUntil(() => host.State == ClientState.InGame));
+        int before = host.Chat.Count;
+
+        host.SendChat("anyone?");
+        net.Run(300);
+        Assert.Equal(before, host.Chat.Count);
     }
 
     [Fact]

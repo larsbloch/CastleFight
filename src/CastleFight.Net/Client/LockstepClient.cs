@@ -23,6 +23,7 @@ public sealed class LockstepClient : IDisposable
     readonly IClientTransport _transport;
     readonly List<TransportEvent> _events = new();
     readonly Dictionary<int, Command[]> _bundles = new();
+    readonly List<ChatMessage> _chat = new();
     readonly ushort _protocolVersion;
     readonly Guid _buildId;
     bool _ended;
@@ -49,12 +50,18 @@ public sealed class LockstepClient : IDisposable
     public int LocalPlayerId => Start?.PlayerIdOfSlot(LocalSlot) ?? -1;
     public int RoundTripMs => _transport.RoundTripMs;
 
+    /// <summary>Lobby chat since joining, oldest first (the last <see cref="ChatHistoryLength"/> lines).</summary>
+    public IReadOnlyList<ChatMessage> Chat => _chat;
+
+    public const int ChatHistoryLength = 200;
+
     internal IClientTransport Transport => _transport;
 
     /// <summary>Set when the relay reported a desync: step to exactly this tick, then dump the state.</summary>
     public DesyncMessage? Desync { get; private set; }
 
     public event Action<LobbyStateMessage>? LobbyChanged;
+    public event Action<ChatMessage>? ChatReceived;
     public event Action<GameStartMessage>? GameStarted;
     public event Action<int>? PlayerLeft;
     public event Action<DesyncMessage>? DesyncDetected;
@@ -109,6 +116,12 @@ public sealed class LockstepClient : IDisposable
                 Lobby = lobby;
                 LobbyChanged?.Invoke(lobby);
                 break;
+            case ChatMessage chat:
+                if (_chat.Count == ChatHistoryLength)
+                    _chat.RemoveAt(0);
+                _chat.Add(chat);
+                ChatReceived?.Invoke(chat);
+                break;
             case GameStartMessage start:
                 Start = start;
                 State = ClientState.InGame;
@@ -146,6 +159,7 @@ public sealed class LockstepClient : IDisposable
     public void SetSlotTeam(int slot, int team) => Send(new SetSlotTeamMessage((byte)slot, (byte)team));
     public void SetMap(MapId map) => Send(new SetMapMessage(map));
     public void StartGame() => Send(new StartGameMessage());
+    public void SendChat(string text) => Send(new SendChatMessage(text));
 
     // ---- Game ----
 

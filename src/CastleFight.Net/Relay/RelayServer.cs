@@ -179,6 +179,7 @@ public sealed class RelayServer : IDisposable
         Log?.Invoke($"'{name}' joined in slot {slot}, team {team}{(slot == _hostSlot ? " (host)" : "")}.");
         _transport.Send(connection, new WelcomeMessage((byte)slot).Encode());
         BroadcastLobby();
+        Broadcast(ChatMessage.Notice(slot == _hostSlot ? $"{name} opened the lobby." : $"{name} joined."));
     }
 
     void OnLobbyMessage(int slot, Message message)
@@ -218,10 +219,26 @@ public sealed class RelayServer : IDisposable
             case StartGameMessage when isHost && CanStart():
                 StartGame();
                 return;
+            case SendChatMessage m:
+                string text = CleanChat(m.Text);
+                if (text.Length > 0)
+                    Broadcast(new ChatMessage((byte)slot, self.Team, self.Name, text));
+                return;
             default:
                 return; // not allowed or no change: nothing to broadcast
         }
         BroadcastLobby();
+    }
+
+    /// <summary>One line: control characters become spaces, trimmed, at most <see cref="ProtocolInfo.MaxChatLength"/> characters.</summary>
+    static string CleanChat(string text)
+    {
+        var chars = text.Select(c => char.IsControl(c) ? ' ' : c).ToArray();
+        string line = new string(chars).Trim();
+        if (line.Length <= ProtocolInfo.MaxChatLength)
+            return line;
+        int length = char.IsHighSurrogate(line[ProtocolInfo.MaxChatLength - 1]) ? ProtocolInfo.MaxChatLength - 1 : ProtocolInfo.MaxChatLength;
+        return line[..length].TrimEnd();
     }
 
     bool CanStart() => _slots.All(s => s.Kind != SlotKind.Human || s.Ready || Array.IndexOf(_slots, s) == _hostSlot);
@@ -368,7 +385,8 @@ public sealed class RelayServer : IDisposable
         {
             s.Kind = SlotKind.Empty;
             s.Connection = -1;
-            if (slot == _hostSlot)
+            bool wasHost = slot == _hostSlot;
+            if (wasHost)
             {
                 _hostSlot = Array.FindIndex(_slots, x => x.Kind == SlotKind.Human);
                 if (_hostSlot < 0)
@@ -381,6 +399,9 @@ public sealed class RelayServer : IDisposable
                 }
             }
             BroadcastLobby();
+            Broadcast(ChatMessage.Notice($"{s.Name} left."));
+            if (wasHost && _hostSlot >= 0)
+                Broadcast(ChatMessage.Notice($"{_slots[_hostSlot].Name} is now the host."));
             return;
         }
 
