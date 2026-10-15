@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\CastleFight.Sim\CastleFight.Sim.csproj" />
+    <ProjectReference Include="..\src\CastleFight.Net\CastleFight.Net.csproj" />
   </ItemGroup>
 
 </Project>

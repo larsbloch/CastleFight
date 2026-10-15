@@ -2,21 +2,31 @@
 
 Handover for a new conversation. Start it with:
 
-> Read `README.md` and `docs/NEXT_STEPS.md`, then start on step 4 (networking).
+> Read `README.md` and `docs/NEXT_STEPS.md`, then continue with the next step.
 
 ## Where we are
 
-Steps 1-3 are done and on `main`:
+Steps 1-4 are done and on `main`:
 
 1. `src/CastleFight.Sim`: deterministic simulation in plain C# (fixed-point math, structure-of-arrays unit pool,
    per-team spatial grids, ring-search targeting, soft separation + sidestep steering, commands, state hash).
-2. `tests/` (22 tests: determinism, crowd flow, hunter targeting, placement, winning) and `tools/CastleFight.Bench`.
-3. `game/`: Godot 4.7.2 .NET project. MultiMesh rendering with interpolation, camera, HUD, mouse placement,
-   `ScriptedBot` players, `--smoke` headless test, Windows release export preset (`build/windows/`).
+2. `tests/` and `tools/CastleFight.Bench`.
+3. `game/`: Godot 4.7.2 .NET project. MultiMesh rendering with interpolation, camera, HUD, `ScriptedBot`
+   players, `--smoke` headless test, Windows release export preset (`build/windows/`).
+4. **Maps, grid placement and lockstep multiplayer** (details below): selectable 1/2/3-lane maps, tile-grid
+   building placement with a placement ghost, units choosing the nearest lane, `src/CastleFight.Net`
+   (relay, client, lobby, desync detection), main menu + lobby UI, standalone server.
 
-Measured on the dev PC (16 threads, single-threaded sim): 4,000 units ≈ 4.5 ms/tick, 8,000 (lane packed full)
-≈ 11.6 ms, 20,000 on a 320x64 map ≈ 10.3 ms. Budget is 50 ms per tick (20 ticks/s); practical target < 8 ms
-because the sim currently runs on the render thread.
+Benchmark (dev PC, 16 threads, single-threaded sim, `--units 4000` = 8,000 units, 300 ticks):
+
+| Map | 8,000 units, avg ms/tick |
+|---|---|
+| Old 160x32 lane (`--map 160x32`) | 9.4 (was 9.6 before step 4) |
+| Single Lane 224x48 | 5.0 |
+| Two Lanes 224x68 | 4.4 |
+| Three Lanes 224x108 | 3.6 |
+
+The new maps are roomier, so the 8,000-unit target fits the 8 ms practical budget without threading for now.
 
 ## Decisions already made
 
@@ -24,93 +34,109 @@ because the sim currently runs on the render thread.
 |---|---|
 | Engine | Godot 4.7.2 .NET, C#, `net10.0` |
 | Platform | Desktop (Windows first). No web: Godot 4 can't export C# to web. |
-| Multiplayer model | Deterministic lockstep: only commands are sent; every client runs the sim. |
-| Players | 1-8 (`GameSetup.MaxPlayers`). Usually 2v2/3v3; 4v4 is for rare big games. |
-| Target scale | ~8,000 units alive (1,000 per player). The 160x32 lane is packed full at 8,000, so it will likely grow for 8 players. |
+| Multiplayer model | Deterministic lockstep over a relay: only commands are sent; every client runs the sim. |
+| Players | 1-8 (`GameSetup.MaxPlayers`), max 4 per team. Usually 2v2/3v3; 4v4 is for rare big games. |
+| Target scale | ~8,000 units alive (1,000 per player). |
 | Art style | Warcraft 3-like: low poly (300-800 tris per normal unit) with hand-painted textures and team-colour masks. Not modern high-poly. |
-| Tick rate | 20 ticks/s, input delay 3 ticks (150 ms) to start with |
+| Tick rate | 20 ticks/s, input delay 3 ticks (150 ms) |
+| Network | LiteNetLib 2.1 (UDP, reliable-ordered), default port **7777**, connect by IP, no LAN discovery yet |
+| Build area | Shared by the whole team (not per player) |
+| Grid | 1-unit tiles; current buildings 2x2, castle 4x4 |
+| Lane choice | Never fixed at spawn: a unit always heads for the lane closest to where it stands now |
 | Sim rules | No float/double, no `System.Random`, no clocks, no Godot APIs in `CastleFight.Sim` (see README) |
 | Workflow | Commit directly to `main` and push (single developer for now). Repo: github.com/larsbloch/CastleFight |
 
-## Step 4: lockstep networking (next)
+## Step 4 (done): maps, grid, lockstep networking
 
-Goal: a release build that 2-8 people can play together over LAN or the internet, with automatic desync
-detection.
+### Maps (`MapDefinition`, `MapCatalog`)
 
-### Design
+Every map is 224 long. Team 0's base is on the left (x < 56), team 1's on the right (x >= 168), lanes in
+between. Castles are 4x4 at x 4-8 (mirrored for team 1). The build zone is x 12-44 (32 deep) and spans every
+lane's band, so where you build decides which lane your units take. There are 12 tiles of open "mouth" between
+the zone and the lanes.
 
-- **Library:** LiteNetLib (UDP, reliable-ordered channel, pure C#).
-- **Topology:** relay. The server never runs the simulation. It only collects commands and broadcasts one
-  bundle per tick. Hosting a game = the host's client also starts the relay in-process. The same relay
-  code runs as a standalone console server (`tools/CastleFight.Server`) for cloud hosting later.
-- **New project `src/CastleFight.Net`** (no Godot references, unit-testable):
-  - Message types + binary serialization (`Fix` sent as raw `long`).
-  - `RelayServer`: lobby slots (max 8), team assignment, start game, tick bundling, hash comparison.
-  - `LockstepClient`: sends local commands, buffers received bundles, tells the game which ticks are ready.
-  - An `ITransport` abstraction with a LiteNetLib implementation and an in-memory one for tests
-    (configurable latency, jitter, and packet ordering).
+| Map (`MapId`) | Width | Lanes (Y) | Walls (Y, 12 thick) | Build zone (Y) | Zone tiles (was 672) |
+|---|---|---|---|---|---|
+| Single Lane (0) | 48 | 0-48 | none | 4-44 | 1,280 |
+| Two Lanes (1) | 68 | 0-28, 40-68 | 28-40 | 6-62 | 1,792 |
+| Three Lanes (2) | 108 | 0-28, 40-68, 80-108 | 28-40, 68-80 | 8-100 | 2,944 |
 
-### Protocol (first version)
+All numbers are parameters of `MapCatalog.CreateLaneMap`. Walls are thicker than any aggro range, and nothing
+targets through a wall (line-of-sight check). The map id is in `GameSetup.Map`, and the map fingerprint is in
+the state hash.
+
+### Movement
+
+- **Own base:** a per-team flow field (`BaseFlowField`: Dijkstra over tiles, rebuilt only when a structure is
+  placed or dies) points every tile at the nearest lane entrance by walking distance around buildings. Units
+  follow it, so if buildings or a crowd push a unit sideways it re-routes to whichever lane is now closest.
+- **In a lane:** straight on, kept off the walls. Spreaders drift to a fraction of the current lane's width.
+- **Past the lanes:** towards the enemy castle's band.
+- Targets are bands, not points, so crowds never converge on a single spot.
+- Walls: soft separation (the existing sidestep logic) plus a hard circle-vs-rectangle push-out.
+- Structures collide as their square footprint, so a 1-tile gap between buildings is walkable.
+- Spawning picks a free tile next to the building, front side first.
+
+### Placement
+
+`Command.PlaceBuilding(player, type, tileX, tileY)` (the footprint's lowest tile). The sim keeps a tile
+occupancy array (derived state, checked by `ValidateOccupancy` in tests), and `CheckPlacement` says why a spot
+is invalid (outside zone / occupied / not enough gold). Godot draws a tile grid over the build zones and a
+green/amber/red ghost.
+
+### Networking (`src/CastleFight.Net`)
+
+- `RelayServer` never runs the sim. It runs the lobby, then sends one `TickBundle` per tick once every
+  connected player's input has arrived. It runs in-process when a player hosts (`RelayHost`, on its own
+  thread) or standalone (`tools/CastleFight.Server`).
+- `LockstepClient` (protocol), `NetworkSession` (steps the sim when a bundle is there; the host runs the bots),
+  `LocalSession` (single player), `MatchDriver` (the shared fixed-rate loop with catch-up and "waiting").
+- `ITransport`: LiteNetLib for real games, `InMemoryNetwork` (virtual clock, latency, jitter, reordering) for tests.
 
 | Direction | Message | Notes |
 |---|---|---|
-| C → S | `Hello(protocolVersion, buildHash, playerName)` | Reject mismatched versions; a desync is guaranteed otherwise. |
-| S → C | `Welcome(slot)` / `Rejected(reason)` | |
-| S → all | `LobbyState(slots: name, team, isBot, ready)` | |
-| C → S | `SetTeam`, `SetReady`; host only: `AddBot`, `RemoveBot`, `StartGame` | |
-| S → all | `GameStart(seed, playerTeams, botSlots, inputDelay)` | Everyone builds the same `GameSetup`. |
-| C → S | `TickInput(tick, commands[])` | Sent for **every** tick, empty if no commands. |
-| S → all | `TickBundle(tick, commands[])` | Sent once all live players' input for `tick` has arrived; commands in canonical order (player id, then issue order). |
+| C → S | `Hello(protocolVersion, buildId, name)` | Rejected on a protocol mismatch, or if the build differs from the first player's (MVID of `CastleFight.Sim`). |
+| S → C | `Welcome(slot)` / `Rejected(reason, text)` | Reasons: version, build, lobby full, game in progress. |
+| S → all | `LobbyState(map, hostSlot, slots)` | The first player in hosts; hosting passes on if they leave the lobby. |
+| C → S | `SetTeam`, `SetReady`; host only: `AddBot`, `RemoveBot`, `SetSlotTeam`, `SetMap`, `StartGame` | Max 4 per team. Start needs every other human ready. |
+| S → all | `GameStart(seed, map, inputDelay, hostSlot, players)` | Player id = index in `players`. Bundles for the first `inputDelay` ticks follow at once. |
+| C → S | `TickInput(tick, commands)` | Every tick, even empty. Commands for anyone but yourself (or the bots, for the host) are dropped. |
+| S → all | `TickBundle(tick, commands)` | Ordered by player id, then issue order. 12 bytes per command, all integers. |
 | C → S | `StateHash(tick, hash)` | Every 20 ticks. |
-| S → all | `Desync(tick, slots)` | Server compares hashes; on mismatch each client dumps its state. |
-| S → all | `PlayerLeft(slot)` | From the next bundle on, that slot simply sends no commands. |
+| S → all | `Desync(tick, dumpTick, hashes)` | The relay halts. Every client steps to exactly `dumpTick` and writes `user://desync_<tick>_<slot>.txt` (`Simulation.DumpState`, one unit per line, diffable). |
+| S → all | `PlayerLeft(playerId)` | The relay stops waiting for them; their buildings keep spawning. |
 
-### Client loop (replaces the single-player loop in `game/scripts/Main.cs`)
+### Acceptance
 
-- Local input → `TickInput` for `currentTick + inputDelay`, as now.
-- Step the sim only for ticks whose `TickBundle` has arrived. If several are buffered, run up to N per frame
-  to catch up. If none is buffered for a while, show "Waiting for players…".
-- Bots: the **host's** client runs `ScriptedBot` for bot slots and sends their commands as those slots.
+- [x] 8 in-memory clients with 20-150 ms jitter and ±10% clock skew play 2,000 ticks with identical hashes
+      (`LockstepTests`), plus 3 humans + 5 bots on three lanes with packet reordering.
+- [x] A client dropping out mid-game does not stall or desync the others.
+- [x] Mismatched protocol versions and builds are rejected.
+- [x] Real UDP: two headless Godot instances (host + join), and two through the standalone server, had identical
+      hashes through tick 600 (commands in the README). Also covered by `LiteNetLoopbackTests`.
+- [x] Release export works and contains `CastleFight.Net.dll` and `LiteNetLib.dll`.
+- [ ] Manual: host + 2 windows, a full match played by hand (the owner).
+- [ ] Manual: 8 windows (or 2-3 windows plus bots), K-spawn stress up to 8,000 units, watch step times.
 
-### Desync tooling
+### Follow-ups (not done)
 
-- Add `Simulation.DumpState(TextWriter)`: a readable dump of every field the hash covers.
-- On `Desync`, every client writes `user://desync_<tick>_<slot>.txt`, so two files can be diffed.
-- Optional: record `GameStart` and every `TickBundle` to a replay file. Replaying it must reproduce the
-  hashes. This gives replays for free, and a desync becomes reproducible offline.
-
-### UI (minimal)
-
-- Main menu: Single player / Host / Join (IP + port) / Quit.
-- Lobby: player list with team picker, Add bot (host), Ready, Start (host).
-- In game: ping and input delay in the HUD, plus the waiting overlay.
-
-### Tests / acceptance criteria
-
-- [ ] Unit test: 8 `LockstepClient`s over the in-memory transport with random latency/jitter play
-      2,000 ticks with bots; every client has identical hashes at every check.
-- [ ] Unit test: a client that disconnects mid-game does not stall or desync the others.
-- [ ] Unit test: mismatched protocol versions are rejected.
-- [ ] Manual: host + 2 more game windows on one PC, play a full match, no desync.
-- [ ] Manual: 8 windows (or 2-3 windows plus bots filling 8 slots), K-spawn stress, check step times.
-- [ ] Release export still works; README updated with how to host/join and which UDP port to forward.
-
-### Open questions to decide during step 4
-
-- Default UDP port (suggest 7777) and whether to add LAN discovery (LiteNetLib supports broadcast).
-- Adaptive input delay from measured ping (nice to have; fixed 3 ticks is fine at first).
-- Reconnect mid-game: out of scope for the first version (would need a state snapshot or replay catch-up).
+- The owner has more lane/movement rules to add.
+- Adaptive input delay from measured ping (fixed 3 ticks = 150 ms stalls when the round trip is longer).
+- Reconnect mid-game (needs a state snapshot or replay catch-up).
+- Replays: record `GameStart` + every `TickBundle`; replaying must reproduce the hashes.
+- LAN discovery (LiteNetLib supports broadcast). Steam's relay later removes port forwarding.
+- If the host's game closes, the in-process relay goes with it; the standalone server avoids that.
 
 ## Later steps (in rough order)
 
 5. **Sim on its own thread.** The main thread renders by interpolating between the last two finished ticks,
    so a step can use most of the 50 ms budget without causing frame hitches. Do this when step times go
-   above about 8 ms. That will be needed for the 8,000-unit target (benchmark: 8,000 units ≈ 11.6 ms).
+   above about 8 ms. On the step 4 maps 8,000 units take 3.6-5.0 ms, so this can wait until gameplay adds cost.
 6. **Gameplay design (needs the owner's input).** Races and their buildings/units/tiers, the income
    model (Castle Fight style income/treasure), armor/attack types, projectiles, splash, auras/heals/slows,
    more `UnitBehavior`s. With 8 players there are more buildings, so watch total unit counts.
-7. **Visuals.** See the visuals plan below. Also HP bars, building placement ghost, build menu, minimap,
-   end-of-game score screen.
+7. **Visuals.** See the visuals plan below. Also HP bars, build menu, minimap, end-of-game score screen
+   (the placement ghost and tile grid were done in step 4).
 8. **Distribution.** Icon, version numbering, Steam (Steamworks relay/matchmaking removes port forwarding).
 
 ## Visuals plan: animated models for 8,000 units
@@ -175,5 +201,7 @@ GPU budget (at 8,000 units, polygon count is the main cost, then shadows):
 - Godot itself may not be installed yet: `winget install GodotEngine.GodotEngine.Mono`. For automated
   checks, the portable editor zip from GitHub releases works headless:
   `--headless --path game --import`, then the smoke test from the README, or
-  `--export-release "Windows Desktop" ../build/windows/CastleFight.exe`.
+  `--export-release "Windows Desktop" ../build/windows/CastleFight.exe`. In step 4 the portable
+  `Godot_v4.7.2-stable_mono_win64.zip` was unpacked to `%TEMP%\godot472\` (use the `_console.exe` for output).
+- After adding a script, run `--headless --path game --import` once so Godot writes its `.uid` file; commit it.
 - Godot plays from the editor in Debug. `CastleFight.Sim` forces `<Optimize>true</Optimize>` because of that.
