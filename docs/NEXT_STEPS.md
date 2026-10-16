@@ -48,7 +48,7 @@ The new maps are roomier, so the 8,000-unit target fits the 8 ms practical budge
 | Lane choice | Never fixed at spawn: a unit always heads for the lane closest to where it stands now |
 | Sim rules | No float/double, no `System.Random`, no clocks, no Godot APIs in `CastleFight.Sim` (see README) |
 | Workflow | Every task on its own branch with a pull request to `main` (several agents work in parallel). Repo: github.com/larsbloch/CastleFight |
-| Menu look | Weathered wood, iron and gold; Cinzel / Cinzel Decorative / Alegreya fonts (OFL). Textures are painted in code (`UiArt`), no image files. Menus scale with the window (1600x900 base); matches render at native size. |
+| Menu look | Weathered wood, iron and gold; Cinzel / Cinzel Decorative / Alegreya fonts (OFL). Textures are painted in code (`UiArt`), no image files. Menus and the in-game HUD scale with the window (1600x900 base); the 3D view renders at native resolution. |
 
 ## Step 4 (done): maps, grid, lockstep networking
 
@@ -194,7 +194,7 @@ is walls plus no-build ramps.
   check boxes). `shaders/menu_backdrop.gdshader` is the animated background (dusk sky, smoke, castle
   silhouettes, embers); `shaders/gold_text.gdshader` makes the "CASTLE FIGHT" title worn gold.
 - Themes only pass down through Controls, so `App` keeps every menu under one themed full-screen `Control`
-  (with the backdrop). The in-game HUD is not themed yet.
+  (with the backdrop). The in-game HUD sets the same theme (`UiTheme.Shared`) on itself.
 - **Screens:** `MainMenu` (Host Game / Join Game / Options / Exit), `HostScreen` (map cards, port,
   *Open Lobby*; bots are added in the lobby), `JoinScreen` (favourite + recent servers, address form),
   `OptionsScreen` (name, window mode, frame cap, vsync), `LobbyScreen` (map, both armies with open places,
@@ -205,7 +205,32 @@ is walls plus no-build ramps.
   command line (`--map N`, `--smoke`).
 - The protocol went to version 2 for chat (see the table above).
 - Ideas: a ping per player in the lobby, kicking players, server status/ping for favourites (LiteNetLib
-  unconnected messages), in-game chat, theming the HUD, sounds for clicks.
+  unconnected messages), in-game chat, sounds for clicks.
+
+## In-game HUD (done)
+
+Warcraft 3 style, in `ui/GameHud.cs`. The stone is painted in code too (`UiArt.Hud.cs`): a seamless stone-block
+texture repeated over every shape with world-aligned UVs, plus bronze-rimmed wells, metal-rimmed slots and navy/gold
+top-bar buttons (theme variations `HudButton`, `HudWell`, `HudSlot`, `HudResource`, `HudValueLabel`, `HudPlaqueLabel`,
+`HudDebugLabel`).
+
+- **Top bar:** *Menu (F10)* and *Debug (F11)*; the space where WC3 has Quests/Allies/Log is left empty. A medallion in
+  the middle (decoration only). Gold, wood and food on the right (`ResourceIcon` draws the coin, tree and drumstick);
+  wood and food always show 0 until they get rules. No "upkeep" box.
+- **Menu:** Return to Game, Restart (single player only), Leave Match. It pauses a single player game; online the
+  game goes on. `Esc` closes it.
+- **Debug:** shows/hides the old text readout (FPS, units, tick, sim step, hash, ping, build keys, controls). The
+  choice is saved in `settings.cfg` (`[hud] debug`). Notices such as "X left the game" are always shown, above the
+  minimap.
+- **Bottom console:** a castle wall with battlements. Left tower: `Minimap` (a `MapIcon` letterboxed to the map's
+  aspect, blue/red dots per unit and squares per building, refreshed 10 times a second; dense crowds are drawn as one
+  dot per cell; the camera's view outline; click/drag moves the camera). Middle: an arched portrait frame and the unit
+  stats well (both empty). Right tower: inventory (2x3) and the command card (3x2), all empty for now.
+- Only the stone takes the mouse (`GameHud._HasPoint`); clicks and the wheel anywhere else go to the game, and the
+  placement ghost hides while the mouse is over the HUD.
+- The window now uses `canvas_items` scaling in matches as well (it used to be off), so the HUD is laid out at
+  1600x900 or wider and scales up crisply. 3D still renders at the window's resolution.
+- Next: fill the command card with the build buttons (replacing the 1-4 keys), selection with portrait + stats, HP bars.
 
 ## Later steps (in rough order)
 
@@ -215,7 +240,7 @@ is walls plus no-build ramps.
 6. **Gameplay design (needs the owner's input).** Races and their buildings/units/tiers, the income
    model (Castle Fight style income/treasure), armor/attack types, projectiles, splash, auras/heals/slows,
    more `UnitBehavior`s. With 8 players there are more buildings, so watch total unit counts.
-7. **Visuals.** See the visuals plan below. Also HP bars, build menu, minimap, end-of-game score screen
+7. **Visuals.** See the visuals plan below. Also HP bars, build menu (on the HUD command card), end-of-game score screen
    (the placement ghost and tile grid were done in step 4).
 8. **Distribution.** Icon, version numbering, Steam (Steamworks relay/matchmaking removes port forwarding).
 
