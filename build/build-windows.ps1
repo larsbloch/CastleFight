@@ -35,6 +35,12 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar in PowerShell 5
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# Godot builds the C# projects with MSBuild during the export. By default MSBuild leaves worker nodes running for
+# reuse; they inherit Godot's console output, so the Godot console executable never sees it close and the export
+# never returns, although CastleFight.exe is already written. Build without lingering workers.
+$env:MSBUILDDISABLENODEREUSE = '1'
+$env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
+
 $GodotVersion = '4.7.2'
 $GodotExeName = "Godot_v$GodotVersion-stable_mono_win64_console.exe"
 $ReleaseUrl = "https://github.com/godotengine/godot/releases/download/$GodotVersion-stable"
