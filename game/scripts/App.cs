@@ -144,13 +144,8 @@ public partial class App : Node
         screen.OpenLobbyRequested += () =>
         {
             _settings.Save();
-            _pendingSetup = new LobbySetup(_settings.HostMap, _settings.HostBlueBots, _settings.HostRedBots, false);
+            _pendingSetup = new LobbySetup(_settings.HostMap, 0, 0, false);
             Host(_settings.HostPort);
-        };
-        screen.PlayOfflineRequested += () =>
-        {
-            _settings.Save();
-            StartOffline(_settings.HostMap, _settings.HostBlueBots, _settings.HostRedBots);
         };
         ShowScreen(screen);
     }
@@ -179,7 +174,7 @@ public partial class App : Node
         ShowScreen(screen);
     }
 
-    /// <summary>Single player against bots on this PC: you, your bot allies, then the enemy bots.</summary>
+    /// <summary>Single player against bots on this PC (command line only): you, your bot allies, then the enemy bots.</summary>
     void StartOffline(MapId map, int blueBots, int redBots)
     {
         CloseNetwork();
@@ -257,7 +252,7 @@ public partial class App : Node
         ShowScreen(lobby);
     }
 
-    /// <summary>Once in the lobby: the host's map and bots from the setup screen (or command line), and --ready / --say.</summary>
+    /// <summary>Once in the lobby: the host's map from the setup screen (or map and bots from the command line), and --ready / --say.</summary>
     void ApplyLobbySetup()
     {
         if (_client is not { State: ClientState.Lobby, Lobby: not null })
