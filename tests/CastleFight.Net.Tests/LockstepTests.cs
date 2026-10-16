@@ -161,7 +161,7 @@ public class LockstepTests
         var guest = sessions[1];
         var hostSim = sessions[0].Sim;
         int hostPlayer = clients[0].LocalPlayerId;
-        var zone = hostSim.Map.BuildZone(hostSim.Players[hostPlayer].Team);
+        var zone = hostSim.Map.BuildZones(hostSim.Players[hostPlayer].Team)[0];
 
         // The guest tries to build in the host's name; the host's own command goes through.
         guest.Issue(Command.PlaceBuilding(hostPlayer, UnitCatalog.Barracks, zone.MinX, zone.MinY));

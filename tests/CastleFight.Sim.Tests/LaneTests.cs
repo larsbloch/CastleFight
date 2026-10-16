@@ -9,7 +9,7 @@ public class LaneTests
     {
         // Three players on team 0 build at the top, middle and bottom of the zone.
         var sim = new Simulation(new GameSetup(1, [0, 0, 0, 1]) { Map = MapId.ThreeLanes });
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         int middle = (zone.MinY + zone.MaxY) / 2 - 1;
         sim.Step([
             Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MaxX - 2, zone.MinY),
@@ -44,9 +44,9 @@ public class LaneTests
             sim.Step([]);
 
         // Something shoves it to the far side of the base: it re-routes to the bottom lane.
-        Teleport(sim, unit, new FixVec2(Fix.FromInt(36), Fix.FromInt(96)));
+        Teleport(sim, unit, new FixVec2(Fix.FromInt(30), Fix.FromInt(96)));
         Assert.Equal(2, sim.LaneOf(0, u.Pos[unit]));
-        for (int tick = 0; tick < Simulation.TicksPerSecond * 20; tick++)
+        for (int tick = 0; tick < Simulation.TicksPerSecond * 30; tick++)
             sim.Step([]);
 
         Assert.True(u.Pos[unit].X > Fix.FromInt(sim.Map.LaneMinX + 5));
@@ -56,8 +56,9 @@ public class LaneTests
     [Fact]
     public void The_flow_field_routes_around_buildings()
     {
-        var sim = new Simulation(new GameSetup(1, [0, 1]) { StartingGold = 10_000 });
-        var zone = sim.Map.BuildZone(0);
+        // A flat map, so the building stands right between the tiles and the lane entrance.
+        var sim = new Simulation(new GameSetup(1, [0, 1]) { StartingGold = 10_000 }, MapCatalog.CreateLaneMap("Flat", laneCount: 1, laneWidth: 48));
+        var zone = sim.Map.BuildZones(0)[0];
         int x = zone.MaxX - 2, y = zone.MinY + 10;
         sim.Step([Command.PlaceBuilding(0, UnitCatalog.Barracks, x, y)]);
 
@@ -116,7 +117,7 @@ public class LaneTests
     [Theory]
     [InlineData(MapId.TwoLanes)]
     [InlineData(MapId.ThreeLanes)]
-    public void A_big_crowd_flows_from_the_base_through_the_lanes(MapId mapId)
+    public void A_big_crowd_flows_from_the_base_down_the_ramps_and_through_the_lanes(MapId mapId)
     {
         var sim = new Simulation(GameSetup.ForTeams(2, 1, mapId));
         const int count = 600;
@@ -124,15 +125,17 @@ public class LaneTests
         var crowd = MobileUnits(sim).ToArray();
         var u = sim.Units;
 
-        // Pack them into the base and mouth: 30 columns x 20 rows across the whole map width.
-        Fix rowSpacing = (sim.Map.Width - Fix.FromInt(4)) / 20;
+        // Pack them onto the middle terrace: 24 columns x 25 rows across the whole map width.
+        int startX = sim.Map.Terraces[1].Area.MinX + 2;
+        Fix rowSpacing = (sim.Map.Width - Fix.FromInt(4)) / 25;
         for (int k = 0; k < crowd.Length; k++)
-            Teleport(sim, crowd[k], new FixVec2(Fix.FromInt(24 + k % 30), Fix.FromInt(2) + rowSpacing * (k / 30)));
+            Teleport(sim, crowd[k], new FixVec2(Fix.FromInt(startX + k % 24), Fix.FromInt(2) + rowSpacing * (k / 24)));
 
-        Fix exitX = Fix.FromInt(sim.Map.LaneMaxX);
+        // Through the lanes and up the enemy's first ramp.
+        Fix exitX = Fix.FromInt(sim.Map.LaneMaxX + 2);
         var passed = new HashSet<int>();
         Fix speed = sim.Catalog[UnitCatalog.Footman].Speed;
-        int unobstructedTicks = ((exitX - Fix.FromInt(24)) / speed).FloorToInt();
+        int unobstructedTicks = ((exitX - Fix.FromInt(startX)) / speed).FloorToInt();
         int limit = unobstructedTicks * 13 / 10;
         int tick = 0;
         for (; tick < limit && passed.Count < count; tick++)
@@ -151,26 +154,48 @@ public class LaneTests
     }
 
     [Fact]
-    public void Units_do_not_notice_enemies_behind_a_wall()
+    public void Attackers_climb_the_enemy_ramps_to_the_castle()
+    {
+        var sim = new Simulation(GameSetup.ForTeams(1, 1, MapId.ThreeLanes));
+        sim.Step([Command.DebugSpawn(0, UnitCatalog.Footman, 20)]);
+        var u = sim.Units;
+        var attackers = MobileUnits(sim).ToArray();
+
+        // Start at the far end of the top lane, against its edge, so they must swing round to the ramp.
+        var lane = sim.Map.Lanes[0];
+        for (int k = 0; k < attackers.Length; k++)
+            Teleport(sim, attackers[k], new FixVec2(Fix.FromInt(sim.Map.LaneMaxX - 20 + k % 5), Fix.FromInt(lane.MinY + 1 + k / 5)));
+
+        var castle = sim.TileOccupant(sim.Map.CastleFootprint(1).MinX, sim.Map.CastleFootprint(1).MinY);
+        int castleHp = u.Hp[castle];
+        for (int tick = 0; tick < Simulation.TicksPerSecond * 60 && u.Hp[castle] == castleHp; tick++)
+            sim.Step([]);
+
+        Assert.True(u.Hp[castle] < castleHp, "no attacker reached the enemy castle within a minute");
+    }
+
+    [Fact]
+    public void Units_do_not_notice_enemies_behind_a_cliff()
     {
         var sim = new Simulation(GameSetup.ForTeams(1, 1, MapId.TwoLanes));
         sim.Step([Command.DebugSpawn(0, UnitCatalog.Hunter, 1), Command.DebugSpawn(1, UnitCatalog.Footman, 1)]);
         var u = sim.Units;
         int hunter = MobileUnits(sim).Single(i => u.Team[i] == 0);
         int footman = MobileUnits(sim).Single(i => u.Team[i] == 1);
-        var wall = sim.Map.Walls[0];
-        var hunterAt = new FixVec2(Fix.FromInt(sim.Map.LaneMinX - 2), Fix.FromInt(wall.MinY + 6));
+        var cliff = sim.Map.Cliffs[0];
+        Fix y = Fix.FromInt(sim.Map.WidthTiles / 2); // between the two ramps, so the cliff is solid here
+        var hunterAt = new FixVec2(Fix.FromInt(cliff.MaxX + 2), y);
 
-        // In aggro range, but the straight line passes through the wall's corner.
+        // In aggro range, but on the other terrace with the cliff in between.
         Teleport(sim, hunter, hunterAt);
-        Teleport(sim, footman, new FixVec2(Fix.FromInt(sim.Map.LaneMinX + 2), Fix.FromInt(wall.MinY - 1)));
+        Teleport(sim, footman, new FixVec2(Fix.FromInt(cliff.MinX - 2), y));
         u.RetargetTimer[hunter] = 1;
         sim.Step([]);
         Assert.False(u.HasValidTarget(hunter));
 
-        // Same distance with a clear line of sight.
+        // Same distance on the same terrace.
         Teleport(sim, hunter, hunterAt);
-        Teleport(sim, footman, new FixVec2(Fix.FromInt(sim.Map.LaneMinX - 6), Fix.FromInt(wall.MinY - 1)));
+        Teleport(sim, footman, new FixVec2(Fix.FromInt(cliff.MaxX + 8), y));
         u.RetargetTimer[hunter] = 1;
         sim.Step([]);
         Assert.True(u.HasValidTarget(hunter));

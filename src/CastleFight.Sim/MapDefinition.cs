@@ -10,23 +10,63 @@ public sealed record LaneDefinition(int Index, TileRect Corridor)
 }
 
 /// <summary>
+/// A step in the ground across the whole width of the map: a thin impassable wall in X [MinX, MaxX) with a ramp
+/// through every gap. The ground is <see cref="UpperLevel"/> on the <see cref="UpperSideIsMinX"/> side and one
+/// level lower on the other. Height is only for looks: to the simulation a cliff is walls plus no-build ramps.
+/// </summary>
+/// <param name="RampRun">How far each ramp sticks out of the cliff on the lower side.</param>
+public sealed record Cliff(int MinX, int MaxX, int UpperLevel, bool UpperSideIsMinX, IReadOnlyList<(int MinY, int MaxY)> Gaps, int RampRun)
+{
+    public int LowerLevel => UpperLevel - 1;
+
+    /// <summary>The same cliff seen from the other end of a map that is <paramref name="mapLength"/> tiles long.</summary>
+    public Cliff MirrorX(int mapLength) => this with { MinX = mapLength - MaxX, MaxX = mapLength - MinX, UpperSideIsMinX = !UpperSideIsMinX };
+}
+
+/// <summary>
+/// The way through a cliff gap. <see cref="Slope"/> is where the ground tilts from <see cref="HighLevel"/> to
+/// <see cref="LowLevel"/>; nothing may be built on <see cref="KeepClear"/> (the slope plus a landing at both ends).
+/// </summary>
+public sealed record Ramp(TileRect Slope, TileRect KeepClear, int LowLevel, bool HighAtMinX)
+{
+    public int HighLevel => LowLevel + 1;
+}
+
+/// <summary>A flat stretch of ground between cliffs (or a map end and a cliff), across the whole map width.</summary>
+public sealed record Terrace(TileRect Area, int Level);
+
+/// <summary>
 /// Static map geometry, all in whole tiles. Team 0's base is on the left (low X), team 1's on the right.
 /// Between the bases, X in [<see cref="LaneMinX"/>, <see cref="LaneMaxX"/>) is split into parallel lanes;
-/// everything in that span that is not a lane is an impassable wall. Bases are open ground holding the
-/// castle and the team's shared build zone.
+/// everything in that span that is not a lane is an impassable wall. Bases hold the castle and the team's shared
+/// build zones, and may be split into terraces by cliffs that units can only cross on ramps.
 /// </summary>
 public sealed class MapDefinition
 {
+    /// <summary>Walls within this many tiles of a column are listed in that column's bucket.</summary>
+    const int WallBucketReach = 2;
+
+    /// <summary>Tiles kept free of buildings at both ends of a ramp, so it can never be blocked.</summary>
+    const int RampLanding = 2;
+
     readonly TileRect[] _castles;
-    readonly TileRect[] _buildZones;
+    readonly TileRect[][] _buildZones;
     readonly TileRect[] _stagingAreas;
     readonly LaneDefinition[] _lanes;
+    readonly Cliff[] _cliffs;
+    readonly Ramp[] _ramps;
+    readonly Terrace[] _terraces;
+    readonly TileRect[] _laneWalls;
+    readonly TileRect[] _cliffWalls;
     readonly TileRect[] _walls;
     readonly FixRect[] _wallRects;
+    readonly FixRect[][] _wallsNearColumn;
+    readonly bool[] _wallTile;
     readonly FixVec2[] _forward = [new(Fix.One, Fix.Zero), new(-Fix.One, Fix.Zero)];
 
     public MapDefinition(string name, int lengthTiles, int widthTiles, int laneMinX, int laneMaxX,
-        IReadOnlyList<(int MinY, int MaxY)> lanes, TileRect[] castleFootprints, TileRect[] buildZones, TileRect[] stagingAreas)
+        IReadOnlyList<(int MinY, int MaxY)> lanes, TileRect[] castleFootprints, TileRect[][] buildZones, TileRect[] stagingAreas,
+        IReadOnlyList<Cliff>? cliffs = null)
     {
         if (lengthTiles < 64 || widthTiles < 8 || lengthTiles > short.MaxValue || widthTiles > short.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(lengthTiles), "The map must be at least 64x8 tiles.");
@@ -50,7 +90,7 @@ public sealed class MapDefinition
 
         var bounds = new TileRect(0, 0, lengthTiles, widthTiles);
         _lanes = new LaneDefinition[lanes.Count];
-        var walls = new List<TileRect>();
+        var laneWalls = new List<TileRect>();
         int previousMaxY = 0;
         for (int i = 0; i < lanes.Count; i++)
         {
@@ -58,22 +98,54 @@ public sealed class MapDefinition
             if (minY < previousMaxY || maxY - minY < 4 || maxY > widthTiles)
                 throw new ArgumentException($"Lane {i} must be at least 4 tiles wide, inside the map and below the next lane.", nameof(lanes));
             if (minY > previousMaxY)
-                walls.Add(new TileRect(laneMinX, previousMaxY, laneMaxX, minY));
+                laneWalls.Add(new TileRect(laneMinX, previousMaxY, laneMaxX, minY));
             _lanes[i] = new LaneDefinition(i, new TileRect(laneMinX, minY, laneMaxX, maxY));
             previousMaxY = maxY;
         }
         if (previousMaxY < widthTiles)
-            walls.Add(new TileRect(laneMinX, previousMaxY, laneMaxX, widthTiles));
-        _walls = walls.ToArray();
+            laneWalls.Add(new TileRect(laneMinX, previousMaxY, laneMaxX, widthTiles));
+        _laneWalls = laneWalls.ToArray();
+
+        _cliffs = (cliffs ?? []).OrderBy(c => c.MinX).ToArray();
+        (_cliffWalls, _ramps) = BuildCliffs(_cliffs, bounds);
+        _terraces = BuildTerraces(_cliffs, lengthTiles, widthTiles);
+        foreach (var cliff in _cliffs)
+        {
+            if (cliff.MaxX > laneMinX && cliff.MinX < laneMaxX)
+                throw new ArgumentException("Cliffs must lie in the bases, outside the lane span.", nameof(cliffs));
+        }
+
+        _walls = [.. _laneWalls, .. _cliffWalls];
         _wallRects = _walls.Select(w => w.ToFixRect()).ToArray();
+        _wallTile = new bool[lengthTiles * widthTiles];
+        foreach (var wall in _walls)
+        {
+            for (int y = wall.MinY; y < wall.MaxY; y++)
+                Array.Fill(_wallTile, true, y * lengthTiles + wall.MinX, wall.Width);
+        }
+        _wallsNearColumn = new FixRect[lengthTiles][];
+        for (int x = 0; x < lengthTiles; x++)
+        {
+            _wallsNearColumn[x] = Enumerable.Range(0, _walls.Length)
+                .Where(i => _walls[i].MinX < x + 1 + WallBucketReach && _walls[i].MaxX > x - WallBucketReach)
+                .Select(i => _wallRects[i])
+                .ToArray();
+        }
 
         for (int team = 0; team < Simulation.TeamCount; team++)
         {
             var baseArea = BaseArea(team);
-            if (!baseArea.Contains(_castles[team]) || !baseArea.Contains(_buildZones[team]))
-                throw new ArgumentException($"Team {team}'s castle and build zone must lie inside its base.");
-            if (_castles[team].Overlaps(_buildZones[team]) || _castles[team].IsEmpty || _buildZones[team].IsEmpty)
-                throw new ArgumentException($"Team {team}'s castle and build zone must be non-empty and must not overlap.");
+            if (!baseArea.Contains(_castles[team]) || _castles[team].IsEmpty)
+                throw new ArgumentException($"Team {team}'s castle must be non-empty and lie inside its base.");
+            if (_buildZones[team].Length == 0)
+                throw new ArgumentException($"Team {team} needs at least one build zone.");
+            foreach (var zone in _buildZones[team])
+            {
+                if (zone.IsEmpty || !baseArea.Contains(zone) || zone.Overlaps(_castles[team]))
+                    throw new ArgumentException($"Team {team}'s build zones must be non-empty, inside its base and clear of the castle.");
+                if (_walls.Any(zone.Overlaps))
+                    throw new ArgumentException($"Team {team}'s build zone {zone} overlaps a wall.");
+            }
             if (!bounds.Contains(_stagingAreas[team]) || _stagingAreas[team].IsEmpty)
                 throw new ArgumentException($"Team {team}'s staging area must be non-empty and inside the map.");
         }
@@ -93,17 +165,34 @@ public sealed class MapDefinition
     public int LaneMaxX { get; }
 
     public IReadOnlyList<LaneDefinition> Lanes => _lanes;
+
+    /// <summary>Every impassable rectangle: <see cref="LaneWalls"/> followed by <see cref="CliffWalls"/>.</summary>
     public IReadOnlyList<TileRect> Walls => _walls;
+
+    /// <summary>The thick walls (forest) between and beside the lanes.</summary>
+    public IReadOnlyList<TileRect> LaneWalls => _laneWalls;
+
+    /// <summary>The thin cliff walls in the bases, i.e. every cliff minus its gaps.</summary>
+    public IReadOnlyList<TileRect> CliffWalls => _cliffWalls;
+
+    public IReadOnlyList<Cliff> Cliffs => _cliffs;
+    public IReadOnlyList<Ramp> Ramps => _ramps;
+
+    /// <summary>Flat ground between the cliffs, ordered by X. Cliff columns themselves belong to no terrace.</summary>
+    public IReadOnlyList<Terrace> Terraces => _terraces;
 
     /// <summary>Hash of all geometry. Part of the state hash, so clients on different maps desync immediately.</summary>
     public ulong Fingerprint { get; }
 
     public TileRect CastleFootprint(int team) => _castles[team];
     public FixVec2 CastlePosition(int team) => _castles[team].Center;
-    public TileRect BuildZone(int team) => _buildZones[team];
+
+    /// <summary>The team's build zones, castle terrace first. A building must fit inside one of them.</summary>
+    public IReadOnlyList<TileRect> BuildZones(int team) => _buildZones[team];
+
     public TileRect StagingArea(int team) => _stagingAreas[team];
 
-    /// <summary>Open ground on the team's own side of the lanes.</summary>
+    /// <summary>Ground on the team's own side of the lanes.</summary>
     public TileRect BaseArea(int team) =>
         team == 0 ? new TileRect(0, 0, LaneMinX, WidthTiles) : new TileRect(LaneMaxX, 0, LengthTiles, WidthTiles);
 
@@ -112,16 +201,39 @@ public sealed class MapDefinition
 
     public bool InBounds(int x, int y) => (uint)x < (uint)LengthTiles && (uint)y < (uint)WidthTiles;
 
-    public bool IsBuildable(int team, int x, int y) => _buildZones[team].Contains(x, y);
-
-    public bool IsWallTile(int x, int y)
+    /// <summary>True when the footprint lies inside one of the team's build zones (ramps are checked separately).</summary>
+    public bool IsInBuildZone(int team, TileRect footprint)
     {
-        foreach (var wall in _walls)
+        foreach (var zone in _buildZones[team])
         {
-            if (wall.Contains(x, y))
+            if (zone.Contains(footprint))
                 return true;
         }
         return false;
+    }
+
+    /// <summary>True when the footprint touches a ramp or its landings, where nothing may be built.</summary>
+    public bool BlocksRamp(TileRect footprint)
+    {
+        foreach (var ramp in _ramps)
+        {
+            if (ramp.KeepClear.Overlaps(footprint))
+                return true;
+        }
+        return false;
+    }
+
+    public bool IsWallTile(int x, int y) => InBounds(x, y) && _wallTile[y * LengthTiles + x];
+
+    /// <summary>The terrace containing column <paramref name="x"/>, or null on a cliff column.</summary>
+    public Terrace? TerraceAt(int x)
+    {
+        foreach (var terrace in _terraces)
+        {
+            if (x >= terrace.Area.MinX && x < terrace.Area.MaxX)
+                return terrace;
+        }
+        return null;
     }
 
     /// <summary>True while the position is still on the team's own side of the lanes.</summary>
@@ -150,14 +262,11 @@ public sealed class MapDefinition
 
     /// <summary>
     /// Pushes a circle out of every wall it overlaps (rounded corners, so units slide around wall ends).
-    /// Walls are few and only exist in the lane span, so this is cheap for most units.
+    /// Only the walls near the position's column are checked, so this is cheap for most units.
     /// </summary>
     public FixVec2 ResolveWalls(FixVec2 position, Fix radius)
     {
-        if (!NearWallSpan(position.X, radius))
-            return position;
-
-        foreach (var wall in _wallRects)
+        foreach (var wall in WallsNear(position.X, radius))
         {
             if (position.X + radius <= wall.Min.X || position.X - radius >= wall.Max.X ||
                 position.Y + radius <= wall.Min.Y || position.Y - radius >= wall.Max.Y)
@@ -193,12 +302,9 @@ public sealed class MapDefinition
     public bool TryNearestWallPoint(FixVec2 position, Fix within, out FixVec2 point)
     {
         point = default;
-        if (!NearWallSpan(position.X, within))
-            return false;
-
         Fix bestSq = within * within;
         bool found = false;
-        foreach (var wall in _wallRects)
+        foreach (var wall in WallsNear(position.X, within))
         {
             var closest = new FixVec2(Fix.Clamp(position.X, wall.Min.X, wall.Max.X), Fix.Clamp(position.Y, wall.Min.Y, wall.Max.Y));
             Fix distanceSq = FixVec2.DistanceSquared(position, closest);
@@ -255,7 +361,7 @@ public sealed class MapDefinition
 
     public bool IsInsideWall(FixVec2 position, Fix margin)
     {
-        foreach (var wall in _wallRects)
+        foreach (var wall in WallsNear(position.X, margin))
         {
             if (position.X > wall.Min.X - margin && position.X < wall.Max.X + margin &&
                 position.Y > wall.Min.Y - margin && position.Y < wall.Max.Y + margin)
@@ -264,8 +370,70 @@ public sealed class MapDefinition
         return false;
     }
 
-    bool NearWallSpan(Fix x, Fix margin) =>
-        _walls.Length > 0 && x + margin > Fix.FromInt(LaneMinX) && x - margin < Fix.FromInt(LaneMaxX);
+    /// <summary>Every wall that a circle at <paramref name="x"/> with the given radius can touch (in the same order as <see cref="Walls"/>).</summary>
+    ReadOnlySpan<FixRect> WallsNear(Fix x, Fix margin)
+    {
+        if (margin > Fix.FromInt(WallBucketReach))
+            return _wallRects;
+        int column = Math.Clamp(x.FloorToInt(), 0, LengthTiles - 1);
+        return _wallsNearColumn[column];
+    }
+
+    static (TileRect[] Walls, Ramp[] Ramps) BuildCliffs(Cliff[] cliffs, TileRect bounds)
+    {
+        var walls = new List<TileRect>();
+        var ramps = new List<Ramp>();
+        int previousMaxX = 0;
+        foreach (var cliff in cliffs)
+        {
+            if (cliff.MinX < previousMaxX || cliff.MaxX <= cliff.MinX || cliff.MaxX > bounds.MaxX || cliff.UpperLevel < 1 || cliff.RampRun < 0)
+                throw new ArgumentException("Cliffs must be non-empty, inside the map, apart from each other and above level 0.", nameof(cliffs));
+            previousMaxX = cliff.MaxX;
+
+            int wallStartY = 0;
+            foreach (var (minY, maxY) in cliff.Gaps.OrderBy(g => g.MinY))
+            {
+                if (minY < wallStartY || maxY <= minY || maxY > bounds.MaxY)
+                    throw new ArgumentException("A cliff's gaps must be non-empty, inside the map and apart from each other.", nameof(cliffs));
+                if (minY > wallStartY)
+                    walls.Add(new TileRect(cliff.MinX, wallStartY, cliff.MaxX, minY));
+                wallStartY = maxY;
+
+                var slope = cliff.UpperSideIsMinX
+                    ? new TileRect(cliff.MinX, minY, cliff.MaxX + cliff.RampRun, maxY)
+                    : new TileRect(cliff.MinX - cliff.RampRun, minY, cliff.MaxX, maxY);
+                var keepClear = new TileRect(
+                    Math.Max(slope.MinX - RampLanding, 0), minY, Math.Min(slope.MaxX + RampLanding, bounds.MaxX), maxY);
+                ramps.Add(new Ramp(slope, keepClear, cliff.LowerLevel, cliff.UpperSideIsMinX));
+            }
+            if (wallStartY < bounds.MaxY)
+                walls.Add(new TileRect(cliff.MinX, wallStartY, cliff.MaxX, bounds.MaxY));
+        }
+        return (walls.ToArray(), ramps.ToArray());
+    }
+
+    static Terrace[] BuildTerraces(Cliff[] cliffs, int length, int width)
+    {
+        if (cliffs.Length == 0)
+            return [new Terrace(new TileRect(0, 0, length, width), 0)];
+
+        var terraces = new List<Terrace>();
+        int startX = 0;
+        int level = cliffs[0].UpperSideIsMinX ? cliffs[0].UpperLevel : cliffs[0].LowerLevel;
+        foreach (var cliff in cliffs)
+        {
+            int before = cliff.UpperSideIsMinX ? cliff.UpperLevel : cliff.LowerLevel;
+            if (before != level)
+                throw new ArgumentException("Neighbouring cliffs must agree on the level of the ground between them.", nameof(cliffs));
+            if (cliff.MinX > startX)
+                terraces.Add(new Terrace(new TileRect(startX, 0, cliff.MinX, width), level));
+            startX = cliff.MaxX;
+            level = cliff.UpperSideIsMinX ? cliff.LowerLevel : cliff.UpperLevel;
+        }
+        if (startX < length)
+            terraces.Add(new Terrace(new TileRect(startX, 0, length, width), level));
+        return terraces.ToArray();
+    }
 
     ulong ComputeFingerprint()
     {
@@ -283,8 +451,14 @@ public sealed class MapDefinition
         Add(LengthTiles); Add(WidthTiles); Add(LaneMinX); Add(LaneMaxX);
         foreach (var lane in _lanes) AddRect(lane.Corridor);
         foreach (var rect in _castles) AddRect(rect);
-        foreach (var rect in _buildZones) AddRect(rect);
+        foreach (var zones in _buildZones)
+        {
+            Add(zones.Length);
+            foreach (var rect in zones) AddRect(rect);
+        }
         foreach (var rect in _stagingAreas) AddRect(rect);
+        foreach (var rect in _walls) AddRect(rect);
+        foreach (var ramp in _ramps) AddRect(ramp.KeepClear);
         return hash;
     }
 }

@@ -52,17 +52,18 @@ public partial class MatchView : Node3D
 
     public override void _Ready()
     {
+        var terrain = new TerrainHeights(Sim.Map);
         var scenery = new MapScenery();
         AddChild(scenery);
         scenery.Build(Sim.Map);
 
-        _cameraRig = new CameraRig();
+        _cameraRig = new CameraRig { Terrain = terrain };
         AddChild(_cameraRig);
         _cameraRig.Frame(new Vector2(Sim.Map.Length.ToFloat(), Sim.Map.Width.ToFloat()));
         _renderer = new UnitRenderer();
         AddChild(_renderer);
-        _renderer.Build(Sim);
-        _ghost = new PlacementGhost();
+        _renderer.Build(Sim, terrain);
+        _ghost = new PlacementGhost { Terrain = terrain };
         AddChild(_ghost);
 
         var hudLayer = new CanvasLayer();
@@ -235,7 +236,7 @@ public partial class MatchView : Node3D
         }
         text.AppendLine();
         string team = player.Team == 0 ? "blue, left" : "red, right";
-        text.AppendLine($"1-{buildable.Count} select building, LMB place on the grid in your zone ({team}), RMB/Esc cancel   " +
+        text.AppendLine($"1-{buildable.Count} select building, LMB place on the grid in your zones ({team}), RMB/Esc cancel   " +
             $"K +{StressSpawnPerTeam} units   " + (_session.IsNetworked ? "" : "Space pause   R restart   ") + "Esc Esc leave   WASD pan   Wheel zoom");
         if (_notice.Length > 0)
             text.AppendLine(_notice);

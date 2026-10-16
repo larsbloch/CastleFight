@@ -57,14 +57,33 @@ public partial class CameraRig : Node3D
             _distance = Mathf.Min(MaxDistance, _distance * ZoomStep);
     }
 
-    /// <summary>Where the mouse ray hits the ground plane (y = 0), if it does.</summary>
+    /// <summary>Ground heights for picking; flat (y = 0) when not set.</summary>
+    public TerrainHeights? Terrain { get; set; }
+
+    /// <summary>
+    /// Where the mouse ray hits the ground, if it does. Terraces are flat, so this intersects the ray with the
+    /// height found under the previous guess a few times, starting at y = 0.
+    /// </summary>
     public Vector3? ScreenToGround(Vector2 screenPosition)
     {
         Vector3 origin = Camera.ProjectRayOrigin(screenPosition);
         Vector3 direction = Camera.ProjectRayNormal(screenPosition);
         if (Mathf.Abs(direction.Y) < 1e-4f)
             return null;
-        float distance = -origin.Y / direction.Y;
-        return distance < 0f ? null : origin + direction * distance;
+
+        float height = 0f;
+        Vector3 hit = default;
+        for (int i = 0; i < 4; i++)
+        {
+            float distance = (height - origin.Y) / direction.Y;
+            if (distance < 0f)
+                return null;
+            hit = origin + direction * distance;
+            float below = Terrain?.At(hit.X, hit.Z) ?? 0f;
+            if (Mathf.Abs(below - height) < 0.01f)
+                break;
+            height = below;
+        }
+        return hit;
     }
 }

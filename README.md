@@ -31,8 +31,11 @@ writes the same fields as readable text. Any change to the simulation or the wir
 
 ## Playing
 
-Maps: **Single Lane**, **Two Lanes**, **Three Lanes**. Each team shares one build zone. Units walk to the lane
-closest to where they stand, so building at the top or bottom of the zone picks the lane.
+Maps: **Single Lane**, **Two Lanes**, **Three Lanes**. Like the original Castle Fight, each base climbs from the
+lanes in two steps: a middle terrace, then the castle terrace. Cliff walls separate them, with one ramp per lane.
+Each team shares the build zones on both terraces. Units walk to the lane closest to where they stand (through the
+ramps), so building at the top or bottom of the base picks the lane. Nothing can be built on a ramp or its landings
+(shown red).
 
 Controls: `1`-`4` choose a building, a green ghost shows where it goes (amber: not enough gold, red: blocked),
 left click places it, right click or `Esc` cancels. `WASD` pans, the mouse wheel zooms, `K` spawns a stress wave.

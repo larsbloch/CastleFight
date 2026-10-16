@@ -5,7 +5,7 @@ namespace CastleFight.Game;
 
 /// <summary>
 /// Translucent preview of the selected building, snapped to the tile grid under the mouse. Green when it
-/// can be placed, amber when only the gold is missing, red when the spot is blocked or outside the zone.
+/// can be placed, amber when only the gold is missing, red when the spot is blocked, on a ramp or outside the zones.
 /// </summary>
 public partial class PlacementGhost : MeshInstance3D
 {
@@ -20,6 +20,8 @@ public partial class PlacementGhost : MeshInstance3D
         Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
         ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
     };
+
+    public TerrainHeights Terrain { get; set; } = null!;
 
     public override void _Ready()
     {
@@ -52,7 +54,8 @@ public partial class PlacementGhost : MeshInstance3D
         };
 
         Scale = new Vector3(size * 0.98f, Height, size * 0.98f);
-        Position = new Vector3(tileX + size * 0.5f, Height * 0.5f, tileY + size * 0.5f);
+        float x = tileX + size * 0.5f, z = tileY + size * 0.5f;
+        Position = new Vector3(x, Terrain.At(x, z) + Height * 0.5f, z);
         Visible = true;
     }
 }
