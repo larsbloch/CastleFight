@@ -9,7 +9,7 @@ public class PlacementTests
     public void Buildings_can_stand_side_by_side_but_not_overlap()
     {
         var sim = RichSim();
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         int x = zone.MinX, y = zone.MinY;
 
         sim.Step([
@@ -29,15 +29,44 @@ public class PlacementTests
     public void Placement_outside_the_own_zone_or_off_the_map_is_rejected()
     {
         var sim = RichSim();
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, zone.MinX - 1, zone.MinY));
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, zone.MaxX - 1, zone.MinY));
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, zone.MinX, zone.MaxY - 1));
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, short.MinValue, short.MaxValue));
-        Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, sim.Map.BuildZone(1).MinX, sim.Map.BuildZone(1).MinY));
+        Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, sim.Map.BuildZones(1)[0].MinX, sim.Map.BuildZones(1)[0].MinY));
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Footman, zone.MinX, zone.MinY));
         Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Castle, zone.MinX, zone.MinY));
         Assert.True(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, zone.MaxX - 2, zone.MaxY - 2));
+    }
+
+    [Theory]
+    [InlineData(MapId.SingleLane)]
+    [InlineData(MapId.TwoLanes)]
+    [InlineData(MapId.ThreeLanes)]
+    public void Both_terraces_are_buildable_but_ramps_are_not(MapId map)
+    {
+        var sim = RichSim(map);
+        foreach (var zone in sim.Map.BuildZones(0))
+            Assert.True(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, zone.MinX, zone.MinY));
+
+        // The middle terrace's zone runs over the landing at the foot of the upper ramps.
+        var middle = sim.Map.BuildZones(0)[1];
+        var ramp = sim.Map.Ramps.First(r => r.KeepClear.Overlaps(middle));
+        Assert.Equal(PlacementResult.OnRamp, sim.CheckPlacement(0, UnitCatalog.Barracks, middle.MinX, ramp.Slope.MinY));
+        Assert.Equal(PlacementResult.OnRamp, sim.CheckPlacement(0, UnitCatalog.Barracks, middle.MinX, ramp.Slope.MaxY - 1));
+        Assert.Equal(PlacementResult.Ok, sim.CheckPlacement(0, UnitCatalog.Barracks, middle.MinX, ramp.Slope.MaxY));
+        Assert.Equal(PlacementResult.Ok, sim.CheckPlacement(0, UnitCatalog.Barracks, ramp.KeepClear.MaxX, ramp.Slope.MinY));
+
+        // No zone reaches onto a cliff, and no tile of any ramp is buildable.
+        foreach (var r in sim.Map.Ramps)
+        {
+            for (int y = r.KeepClear.MinY - 1; y < r.KeepClear.MaxY; y++)
+            {
+                for (int x = r.KeepClear.MinX - 1; x < r.KeepClear.MaxX; x++)
+                    Assert.False(sim.CanPlaceBuilding(0, UnitCatalog.Barracks, x, y), $"built on a ramp at ({x}, {y})");
+            }
+        }
     }
 
     [Fact]
@@ -58,7 +87,7 @@ public class PlacementTests
     public void A_destroyed_building_frees_its_tiles()
     {
         var sim = RichSim();
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         sim.Step([Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MinX, zone.MinY)]);
         int slot = sim.TileOccupant(zone.MinX, zone.MinY);
         Assert.True(slot >= 0);
@@ -75,7 +104,7 @@ public class PlacementTests
     public void A_blocked_front_makes_units_spawn_in_a_free_gap()
     {
         var sim = RichSim();
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         int x = zone.MinX + 10, y = zone.MinY + 10;
         // Barracks with a solid wall of kennels right in front of it (and over its front corners).
         var commands = new List<Command> { Command.PlaceBuilding(0, UnitCatalog.Barracks, x, y) };

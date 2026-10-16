@@ -4,8 +4,9 @@ using Godot;
 namespace CastleFight.Game.UI;
 
 /// <summary>
-/// A small picture of a map drawn from its real geometry, squeezed to the icon's box: grass, forest walls
-/// between the lanes, dirt paths, both bases with their build zones and a castle at each end.
+/// A small picture of a map drawn from its real geometry, squeezed to the icon's box: grass terraces (lighter the
+/// higher they are), stone cliffs with dirt ramps, forest walls between the lanes, dirt paths, both bases with
+/// their build zones and a castle at each end.
 /// </summary>
 public partial class MapIcon : Control
 {
@@ -13,6 +14,7 @@ public partial class MapIcon : Control
     static readonly Color Forest = new(0.07f, 0.11f, 0.06f);
     static readonly Color Dirt = new(0.5f, 0.39f, 0.23f);
     static readonly Color BaseGround = new(0.3f, 0.26f, 0.16f);
+    static readonly Color Stone = new(0.78f, 0.72f, 0.58f);
 
     MapId _map;
 
@@ -35,11 +37,13 @@ public partial class MapIcon : Control
         var scale = new Vector2(area.Size.X / map.LengthTiles, area.Size.Y / map.WidthTiles);
         Rect2 ToIcon(TileRect t) => new(area.Position + new Vector2(t.MinX, t.MinY) * scale, new Vector2(t.Width, t.Height) * scale);
 
-        DrawRect(area, Grass);
+        // Higher terraces are drawn lighter, so the steps up to each castle show.
+        foreach (var terrace in map.Terraces)
+            DrawRect(ToIcon(terrace.Area), Grass.Lightened(0.12f * terrace.Level));
 
         // Forest between the lanes, with a scatter of darker tree tops.
         var random = new RandomNumberGenerator { Seed = (ulong)_map + 1 };
-        foreach (var wall in map.Walls)
+        foreach (var wall in map.LaneWalls)
         {
             var rect = ToIcon(wall);
             DrawRect(rect, Forest);
@@ -54,9 +58,10 @@ public partial class MapIcon : Control
         for (int team = 0; team < Simulation.TeamCount; team++)
         {
             var baseRect = ToIcon(map.BaseArea(team));
-            DrawRect(baseRect, BaseGround);
+            DrawRect(baseRect, BaseGround with { A = 0.45f });
             DrawRect(baseRect, UnitRenderer.TeamColors[team] with { A = 0.13f });
-            DrawRect(ToIcon(map.BuildZone(team)), UiTheme.TeamText[team] with { A = 0.45f }, filled: false, width: 1);
+            foreach (var zone in map.BuildZones(team))
+                DrawRect(ToIcon(zone), UiTheme.TeamText[team] with { A = 0.45f }, filled: false, width: 1);
         }
 
         // Paths: narrower than the lane so the grass shows on both sides, running into both bases.
@@ -71,6 +76,12 @@ public partial class MapIcon : Control
             for (float x = path.Position.X + 4; x < path.End.X - 6; x += 9)
                 DrawLine(new Vector2(x, y), new Vector2(x + 4, y), new Color(0.72f, 0.6f, 0.4f, 0.55f), 1);
         }
+
+        // Cliffs as pale stone walls, ramps as dirt through their gaps.
+        foreach (var wall in map.CliffWalls)
+            DrawRect(ToIcon(wall).Grow(0.5f), Stone);
+        foreach (var ramp in map.Ramps)
+            DrawRect(ToIcon(ramp.Slope), Dirt);
 
         for (int team = 0; team < Simulation.TeamCount; team++)
         {

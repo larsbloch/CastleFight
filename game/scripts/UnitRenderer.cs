@@ -9,7 +9,7 @@ namespace CastleFight.Game;
 /// <summary>
 /// Draws every unit with one MultiMesh per visual style, i.e. one draw call per style no matter
 /// how many units exist. Only reads the simulation; never changes it.
-/// Simulation (x, y) maps to world (x, 0, y).
+/// Simulation (x, y) maps to world (x, ground height, y).
 /// </summary>
 public partial class UnitRenderer : Node3D
 {
@@ -32,9 +32,11 @@ public partial class UnitRenderer : Node3D
     readonly List<Style> _styles = new();
     Style[] _styleOfType = [];
     float[] _brightnessOfType = [];
+    TerrainHeights _terrain = null!;
 
-    public void Build(Simulation sim)
+    public void Build(Simulation sim, TerrainHeights terrain)
     {
+        _terrain = terrain;
         if (_styles.Count > 0)
             return;
 
@@ -150,7 +152,7 @@ public partial class UnitRenderer : Node3D
         var b = style.Buffer;
         int o = style.Count++ * FloatsPerInstance;
         b[o + 0] = fx * sx; b[o + 1] = 0f; b[o + 2] = -fz * sz; b[o + 3] = x;
-        b[o + 4] = 0f; b[o + 5] = sy; b[o + 6] = 0f; b[o + 7] = sy * 0.5f;
+        b[o + 4] = 0f; b[o + 5] = sy; b[o + 6] = 0f; b[o + 7] = _terrain.At(x, z) + sy * 0.5f;
         b[o + 8] = fz * sx; b[o + 9] = 0f; b[o + 10] = fx * sz; b[o + 11] = z;
         b[o + 12] = color.R; b[o + 13] = color.G; b[o + 14] = color.B; b[o + 15] = 1f;
     }

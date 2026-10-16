@@ -33,10 +33,23 @@ public sealed class ScriptedBot
         if (player.Gold < sim.Catalog[typeId].Cost)
             return false;
 
-        TileRect zone = sim.Map.BuildZone(player.Team);
+        var zones = sim.Map.BuildZones(player.Team);
+        int totalArea = 0;
+        foreach (var z in zones)
+            totalArea += z.Width * z.Height;
         int size = sim.Catalog[typeId].FootprintTiles;
         for (int attempt = 0; attempt < PlacementAttempts; attempt++)
         {
+            // Bigger zones get picked more often, so buildings spread evenly over all of them.
+            int pick = _rng.NextInt(totalArea);
+            TileRect zone = zones[0];
+            foreach (var z in zones)
+            {
+                zone = z;
+                pick -= z.Width * z.Height;
+                if (pick < 0)
+                    break;
+            }
             int tileX = zone.MinX + _rng.NextInt(zone.Width - size + 1);
             int tileY = zone.MinY + _rng.NextInt(zone.Height - size + 1);
             if (sim.CanPlaceBuilding(PlayerId, typeId, tileX, tileY))

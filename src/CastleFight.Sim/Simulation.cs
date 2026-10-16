@@ -9,6 +9,7 @@ public enum PlacementResult : byte
     OutsideZone,
     Occupied,
     NotEnoughGold,
+    OnRamp,
 }
 
 /// <summary>
@@ -40,7 +41,8 @@ public sealed partial class Simulation
     readonly Player[] _players;
     readonly SpatialGrid[] _teamGrids;
     readonly StructureGrid _structureGrid;
-    readonly BaseFlowField[] _flowFields;
+    readonly BaseFlowField[] _laneFields;
+    readonly BaseFlowField[] _castleFields;
     readonly int[] _tileOccupant;
     readonly Fix[] _halfFootprintOfType;
     readonly List<int> _spawnCandidates = new();
@@ -85,11 +87,13 @@ public sealed partial class Simulation
 
         _tileOccupant = new int[Map.LengthTiles * Map.WidthTiles];
         _teamGrids = new SpatialGrid[TeamCount];
-        _flowFields = new BaseFlowField[TeamCount];
+        _laneFields = new BaseFlowField[TeamCount];
+        _castleFields = new BaseFlowField[TeamCount];
         for (int team = 0; team < TeamCount; team++)
         {
             _teamGrids[team] = new SpatialGrid(Map.Length, Map.Width, GridCellSize);
-            _flowFields[team] = new BaseFlowField(Map, team);
+            _laneFields[team] = BaseFlowField.ToLanes(Map, team);
+            _castleFields[team] = BaseFlowField.ToEnemyCastle(Map, team);
         }
         _structureGrid = new StructureGrid(Map.Length, Map.Width, GridCellSize);
 
@@ -141,8 +145,8 @@ public sealed partial class Simulation
 
     /// <summary>
     /// Whether <paramref name="playerId"/> can place <paramref name="typeId"/> with its footprint's lowest
-    /// tile at (<paramref name="tileX"/>, <paramref name="tileY"/>): enough gold, every footprint tile inside
-    /// the team's build zone and free. Adjacent buildings are fine.
+    /// tile at (<paramref name="tileX"/>, <paramref name="tileY"/>): enough gold, the footprint inside one of
+    /// the team's build zones, off the ramps and free. Adjacent buildings are fine.
     /// </summary>
     public bool CanPlaceBuilding(int playerId, int typeId, int tileX, int tileY) =>
         CheckPlacement(playerId, typeId, tileX, tileY) == PlacementResult.Ok;
@@ -159,8 +163,11 @@ public sealed partial class Simulation
             return PlacementResult.Invalid;
 
         int size = type.FootprintTiles;
-        if (!Map.BuildZone(player.Team).Contains(new TileRect(tileX, tileY, tileX + size, tileY + size)))
+        var footprint = new TileRect(tileX, tileY, tileX + size, tileY + size);
+        if (!Map.IsInBuildZone(player.Team, footprint))
             return PlacementResult.OutsideZone;
+        if (Map.BlocksRamp(footprint))
+            return PlacementResult.OnRamp;
         for (int y = tileY; y < tileY + size; y++)
         {
             for (int x = tileX; x < tileX + size; x++)
@@ -190,7 +197,7 @@ public sealed partial class Simulation
             return Map.NearestLane(position.Y).Index;
 
         // Follow the flow field to the lane entrance; it is short, and this is only for tests and UI.
-        var field = _flowFields[team];
+        var field = _laneFields[team];
         for (int step = 0; step < Map.LengthTiles * 2 && Map.IsInOwnBase(team, position.X); step++)
         {
             FixVec2 direction = field.DirectionAt(position);
@@ -293,7 +300,9 @@ public sealed partial class Simulation
     void RebuildStructureData()
     {
         _structureGrid.Rebuild(Units, Catalog.MaxMobileRadius);
-        foreach (var field in _flowFields)
+        foreach (var field in _laneFields)
+            field.Rebuild(_tileOccupant);
+        foreach (var field in _castleFields)
             field.Rebuild(_tileOccupant);
         _structuresChanged = false;
     }
@@ -591,8 +600,9 @@ public sealed partial class Simulation
 
     /// <summary>
     /// Where a unit with nothing to fight walks. In its own base it follows the flow field to the nearest
-    /// lane entrance; inside a lane it walks straight on, staying off the walls; past the lanes it heads for
-    /// the enemy castle. All targets are bands rather than points, so crowds never converge on one spot.
+    /// lane entrance; inside a lane it walks straight on, staying off the walls; near the far end of the lane
+    /// and in the enemy base it follows the flow field up the enemy's ramps to their castle. Lane targets are
+    /// bands rather than points, so crowds never converge on one spot.
     /// </summary>
     FixVec2 MarchHeading(byte team, FixVec2 position, Fix radius, UnitType type, Fix spreadFraction, out Fix sideways)
     {
@@ -601,9 +611,13 @@ public sealed partial class Simulation
 
         if (Map.IsInOwnBase(team, position.X))
         {
-            FixVec2 flow = _flowFields[team].DirectionAt(position);
+            FixVec2 flow = _laneFields[team].DirectionAt(position);
             return flow.IsZero ? forward : flow;
         }
+
+        FixVec2 attack = _castleFields[team].DirectionAt(position);
+        if (!attack.IsZero)
+            return attack;
 
         if (!Map.IsPastLanes(team, position.X))
         {
@@ -776,5 +790,7 @@ public sealed partial class Simulation
         return expected.AsSpan().SequenceEqual(_tileOccupant);
     }
 
-    internal BaseFlowField FlowField(int team) => _flowFields[team];
+    internal BaseFlowField FlowField(int team) => _laneFields[team];
+
+    internal BaseFlowField CastleField(int team) => _castleFields[team];
 }

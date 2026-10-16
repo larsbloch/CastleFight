@@ -47,9 +47,9 @@ public class SimulationTests
     public void Placing_a_building_costs_gold_and_respects_the_build_zone()
     {
         var sim = new Simulation(GameSetup.ForTeams(1, 1));
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         int goldBefore = sim.Players[0].Gold;
-        var enemyZone = sim.Map.BuildZone(1);
+        var enemyZone = sim.Map.BuildZones(1)[0];
 
         sim.Step([
             Command.PlaceBuilding(0, UnitCatalog.Barracks, zone.MinX + 4, zone.MinY + 4),
@@ -67,7 +67,7 @@ public class SimulationTests
     public void Buildings_spawn_units_that_walk_toward_the_enemy()
     {
         var sim = new Simulation(GameSetup.ForTeams(1, 1));
-        var zone = sim.Map.BuildZone(0);
+        var zone = sim.Map.BuildZones(0)[0];
         var (tileX, tileY) = Simulation.FootprintOrigin(zone.Center, 2);
         sim.Step([Command.PlaceBuilding(0, UnitCatalog.Barracks, tileX, tileY)]);
 

@@ -135,6 +135,42 @@ green/amber/red ghost.
 - LAN discovery (LiteNetLib supports broadcast). Steam's relay later removes port forwarding.
 - If the host's game closes, the in-process relay goes with it; the standalone server avoids that.
 
+## Terraced maps (done)
+
+The three maps now follow the original Castle Fight layout. Heights are **only for looks**: to the sim, a cliff
+is walls plus no-build ramps.
+
+- Every map is now 240 long (`MapCatalog.CreateTerracedMap`). Team 0's side (team 1's is mirrored):
+
+  | X | What | Level |
+  |---|---|---|
+  | 0-36 | Castle terrace: castle at 4-8, build zone 11-33 | 2 |
+  | 36-38 | Upper cliff | |
+  | 38-66 | Middle terrace: build zone 39-64 | 1 |
+  | 66-68 | Lower cliff | |
+  | 68-172 | Lanes (forest walls between them, as before) | 0 |
+
+- Each cliff has one gap per lane, centred on the lane: 16 wide on Single Lane, 12 on the others. A ramp slopes
+  through each gap and sticks out 4 tiles on the lower side. Nothing can be built on the slope plus a 2-tile
+  landing at both ends (`Ramp.KeepClear`, `PlacementResult.OnRamp`, drawn red). Zones keep clear of the cliffs and
+  the map edges, so a path around any row of buildings always remains.
+- `MapDefinition`: `BuildZones(team)` (list), `Cliffs`, `Ramps`, `Terraces`, `LaneWalls` (forest) and
+  `CliffWalls`. `Walls` is both kinds. Walls can be anywhere now, and each column has a bucket of the walls near
+  it, so the per-unit wall checks stay cheap. `CreateLaneMap` still makes the old flat maps (tests, bench).
+- Movement: the own-base flow field treats walls as blocked, so units head for the nearest ramp on their own.
+  A second per-team field (`BaseFlowField.ToEnemyCastle`) covers the last 16 tiles of the lanes plus the enemy
+  base and leads attackers up the enemy's ramps to the castle. In that field enemy buildings only cost extra
+  (about a 12-tile detour), so a base walled in by buildings still leads attackers into them.
+- Cliffs block line of sight like any wall, so nothing targets across a cliff.
+- Godot: `TerrainHeights` (2 world units per level) lifts the units and the placement ghost onto the ground and
+  makes mouse picking hit the terraces. `MapScenery` draws terrace blocks, stone cliff walls, ramp wedges and dirt
+  roads from the castle to the ramps. `MapIcon` shows terraces, cliffs and ramps.
+- Bench: about the same as before. A back-to-back run on a busy machine gave 8,000 units at 11.0 / 8.4 / 7.9
+  ms/tick (single/two/three), against 9.9 / 9.6 / 8.3 on `main`. The absolute numbers in the table above came from
+  a quieter run.
+- Ideas: high-ground rules (miss chance uphill, ranged units shooting over cliffs), real cliff/ramp art, trees
+  on the forest walls.
+
 ## Menu and lobby UI pass (done)
 
 - **Look:** `UiTheme` builds one Godot `Theme` (fonts, colours, styles for every control type, variations such as
