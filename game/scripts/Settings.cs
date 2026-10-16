@@ -44,6 +44,9 @@ public sealed class Settings
     public bool VSync { get; set; } = true;
     public int MaxFps { get; set; }
 
+    // In-game HUD
+    public bool ShowDebug { get; set; } = true;
+
     public static Settings Load()
     {
         var settings = new Settings();
@@ -61,6 +64,7 @@ public sealed class Settings
         settings.DisplayMode = (DisplayMode)Math.Clamp(file.GetValue("display", "mode", (int)settings.DisplayMode).AsInt32(), 0, 2);
         settings.VSync = file.GetValue("display", "vsync", settings.VSync).AsBool();
         settings.MaxFps = file.GetValue("display", "max_fps", settings.MaxFps).AsInt32();
+        settings.ShowDebug = file.GetValue("hud", "debug", settings.ShowDebug).AsBool();
         return settings;
     }
 
@@ -77,6 +81,7 @@ public sealed class Settings
         file.SetValue("display", "mode", (int)DisplayMode);
         file.SetValue("display", "vsync", VSync);
         file.SetValue("display", "max_fps", MaxFps);
+        file.SetValue("hud", "debug", ShowDebug);
         file.Save(Path);
     }
 

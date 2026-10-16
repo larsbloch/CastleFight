@@ -4,9 +4,10 @@ namespace CastleFight.Game.UI;
 
 /// <summary>
 /// The menu look: weathered wood, iron and brass, Cinzel for headings and buttons, Alegreya for text.
-/// Built once and set on the root window, so every Control (menus and the in-game HUD) inherits it.
+/// Built once (<see cref="Shared"/>) and set on the menu root and on the in-game HUD.
 /// Variations: <c>HeaderLabel</c>, <c>SubHeaderLabel</c>, <c>MutedLabel</c>, <c>BigButton</c>, <c>SmallButton</c>,
-/// <c>InsetPanel</c>, <c>CardButton</c>.
+/// <c>InsetPanel</c>, <c>CardButton</c>; for the HUD <c>HudButton</c>, <c>HudWell</c>, <c>HudSlot</c>,
+/// <c>HudResource</c>, <c>HudValueLabel</c>, <c>HudPlaqueLabel</c>, <c>HudDebugLabel</c>.
 /// </summary>
 static class UiTheme
 {
@@ -25,7 +26,12 @@ static class UiTheme
     public static Font BodyFont { get; private set; } = null!;
     public static Font BodyBoldFont { get; private set; } = null!;
 
-    public static Theme Build()
+    static Theme? _shared;
+
+    /// <summary>The theme, painted on first use.</summary>
+    public static Theme Shared => _shared ??= Build();
+
+    static Theme Build()
     {
         TitleFont = GD.Load<FontFile>("res://assets/fonts/CinzelDecorative-Black.ttf");
         var cinzel = GD.Load<FontFile>("res://assets/fonts/Cinzel-Variable.ttf");
@@ -235,7 +241,62 @@ static class UiTheme
         theme.SetStylebox("separator", "HSeparator", line);
         theme.SetConstant("separation", "HSeparator", 12);
 
+        AddHud(theme);
         return theme;
+    }
+
+    /// <summary>The in-game HUD: navy and gold top-bar buttons, bronze wells, slots and resource boxes.</summary>
+    static void AddHud(Theme theme)
+    {
+        theme.SetTypeVariation("HudButton", "Button");
+        foreach (var (style, state) in new[]
+        {
+            ("normal", UiArt.ButtonState.Normal), ("hover", UiArt.ButtonState.Hover), ("pressed", UiArt.ButtonState.Pressed),
+            ("hover_pressed", UiArt.ButtonState.Pressed), ("disabled", UiArt.ButtonState.Disabled),
+        })
+            theme.SetStylebox(style, "HudButton", Box(UiArt.HudButton(state), UiArt.HudButtonMargin, content: 8, vertical: 1));
+        theme.SetStylebox("focus", "HudButton", new StyleBoxEmpty());
+        theme.SetFontSize("font_size", "HudButton", 15);
+        theme.SetColor("font_color", "HudButton", new Color(0.98f, 0.86f, 0.52f));
+        theme.SetColor("font_hover_color", "HudButton", new Color(1f, 0.95f, 0.75f));
+        theme.SetColor("font_pressed_color", "HudButton", new Color(1f, 0.82f, 0.3f));
+        theme.SetColor("font_hover_pressed_color", "HudButton", new Color(1f, 0.88f, 0.45f));
+        theme.SetColor("font_focus_color", "HudButton", new Color(0.98f, 0.86f, 0.52f));
+        theme.SetConstant("outline_size", "HudButton", 4);
+
+        theme.SetTypeVariation("HudWell", "PanelContainer");
+        theme.SetStylebox("panel", "HudWell", Box(UiArt.Well(), UiArt.WellMargin, content: 8));
+        theme.SetTypeVariation("HudSlot", "PanelContainer");
+        theme.SetStylebox("panel", "HudSlot", Box(UiArt.Slot(), UiArt.SlotMargin, content: 6));
+
+        var resource = new StyleBoxFlat { BgColor = new Color(0.01f, 0.01f, 0.015f, 0.96f), BorderColor = new Color(0.45f, 0.42f, 0.36f) };
+        resource.SetBorderWidthAll(2);
+        resource.SetCornerRadiusAll(2);
+        resource.ContentMarginLeft = 8;
+        resource.ContentMarginRight = 10;
+        theme.SetTypeVariation("HudResource", "PanelContainer");
+        theme.SetStylebox("panel", "HudResource", resource);
+
+        theme.SetTypeVariation("HudValueLabel", "Label");
+        theme.SetFont("font", "HudValueLabel", HeadingFont); // lining figures (Alegreya's are old-style)
+        theme.SetFontSize("font_size", "HudValueLabel", 17);
+        theme.SetColor("font_color", "HudValueLabel", new Color(0.97f, 0.95f, 0.9f));
+
+        theme.SetTypeVariation("HudPlaqueLabel", "Label");
+        theme.SetFont("font", "HudPlaqueLabel", HeadingFont);
+        theme.SetFontSize("font_size", "HudPlaqueLabel", 15);
+        theme.SetColor("font_color", "HudPlaqueLabel", Gold);
+        theme.SetColor("font_outline_color", "HudPlaqueLabel", new Color(0.03f, 0.02f, 0.01f));
+        theme.SetConstant("outline_size", "HudPlaqueLabel", 4);
+
+        // Debug readout and messages over the 3D view: plain and outlined, so they read on any ground.
+        theme.SetTypeVariation("HudDebugLabel", "Label");
+        theme.SetFontSize("font_size", "HudDebugLabel", 16);
+        theme.SetColor("font_color", "HudDebugLabel", new Color(0.95f, 0.95f, 0.92f));
+        theme.SetColor("font_outline_color", "HudDebugLabel", Colors.Black);
+        theme.SetConstant("outline_size", "HudDebugLabel", 5);
+        theme.SetConstant("shadow_offset_x", "HudDebugLabel", 0);
+        theme.SetConstant("shadow_offset_y", "HudDebugLabel", 0);
     }
 
     static FontVariation Weight(FontFile font, int weight)

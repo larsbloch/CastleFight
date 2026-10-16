@@ -17,8 +17,11 @@ namespace CastleFight.Game;
 /// </summary>
 public partial class App : Node
 {
-    /// <summary>Menus are laid out for this size and scaled to the window; matches render at native size.</summary>
-    static readonly Vector2I MenuBaseSize = new(1600, 900);
+    /// <summary>
+    /// Menus and the in-game HUD are laid out for this size and scaled to the window (wider or taller windows get
+    /// more room). The 3D view always renders at the window's own resolution.
+    /// </summary>
+    static readonly Vector2I UiBaseSize = new(1600, 900);
 
     /// <summary>What the host asked for in the setup screen, applied once the lobby is open.</summary>
     sealed record LobbySetup(MapId? Map, int BlueBots, int RedBots, bool Ready);
@@ -46,9 +49,13 @@ public partial class App : Node
             _settings.PlayerName = Settings.CleanName(name);
         if (_options.ScreenshotPath is null && !_options.SkipMenu)
             _settings.ApplyDisplay();
+        var root = GetTree().Root;
+        root.ContentScaleMode = Window.ContentScaleModeEnum.CanvasItems;
+        root.ContentScaleAspect = Window.ContentScaleAspectEnum.Expand;
+        root.ContentScaleSize = UiBaseSize;
 
         // Themes pass down through Controls only, so the menus live under one themed full-screen Control.
-        _menuRoot = new Control { Theme = UiTheme.Build(), MouseFilter = Control.MouseFilterEnum.Ignore };
+        _menuRoot = new Control { Theme = UiTheme.Shared, MouseFilter = Control.MouseFilterEnum.Ignore };
         _menuRoot.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         AddChild(_menuRoot);
         _menuRoot.AddChild(new Backdrop());
@@ -116,10 +123,6 @@ public partial class App : Node
         _screen = screen;
         bool menu = screen is Control;
         _menuRoot.Visible = menu;
-        var root = GetTree().Root;
-        root.ContentScaleMode = menu ? Window.ContentScaleModeEnum.CanvasItems : Window.ContentScaleModeEnum.Disabled;
-        root.ContentScaleAspect = Window.ContentScaleAspectEnum.Expand;
-        root.ContentScaleSize = MenuBaseSize;
         (menu ? (Node)_menuRoot : this).AddChild(screen);
     }
 
@@ -187,7 +190,7 @@ public partial class App : Node
     void ShowMatch(IMatchSession session)
     {
         var view = new MatchView();
-        view.Init(session, _options);
+        view.Init(session, _options, _settings);
         view.LeaveRequested += () => ShowMainMenu();
         view.RestartRequested += () =>
         {

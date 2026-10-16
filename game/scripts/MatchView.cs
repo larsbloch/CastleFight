@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using CastleFight.Game.UI;
 using CastleFight.Net.Sessions;
 using CastleFight.Sim;
 using Godot;
@@ -24,9 +25,10 @@ public partial class MatchView : Node3D
     UnitRenderer _renderer = null!;
     CameraRig _cameraRig = null!;
     PlacementGhost _ghost = null!;
-    Label _hud = null!;
-    Label _banner = null!;
+    Settings _settings = null!;
+    GameHud _hud = null!;
     int _selectedBuilding = -1;
+    bool _pausedBeforeMenu;
     double _hudTimer;
     double _leaveConfirmTimer;
     ulong _lastHash;
@@ -43,10 +45,11 @@ public partial class MatchView : Node3D
     Simulation Sim => _session.Sim;
 
     /// <summary>Call before adding to the tree.</summary>
-    public void Init(IMatchSession session, LaunchOptions options)
+    public void Init(IMatchSession session, LaunchOptions options, Settings settings)
     {
         _session = session;
         _options = options;
+        _settings = settings;
         _driver = new MatchDriver(session);
     }
 
@@ -68,18 +71,21 @@ public partial class MatchView : Node3D
 
         var hudLayer = new CanvasLayer();
         AddChild(hudLayer);
-        _hud = new Label { Position = new Vector2(12, 8) };
-        _hud.AddThemeFontSizeOverride("font_size", 16);
-        _hud.AddThemeConstantOverride("outline_size", 4);
-        _hud.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _hud = new GameHud { CanRestart = !_session.IsNetworked };
+        _hud.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         hudLayer.AddChild(_hud);
-        _banner = new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        _banner.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _banner.AddThemeFontSizeOverride("font_size", 30);
-        _banner.AddThemeConstantOverride("outline_size", 8);
-        _banner.AddThemeColorOverride("font_outline_color", Colors.Black);
-        _banner.MouseFilter = Control.MouseFilterEnum.Ignore;
-        hudLayer.AddChild(_banner);
+        _hud.DebugVisible = _settings.ShowDebug;
+        _hud.DebugToggled += on =>
+        {
+            _settings.ShowDebug = on;
+            _settings.Save();
+        };
+        _hud.MenuToggled += OnMenuToggled;
+        _hud.LeaveRequested += () => LeaveRequested?.Invoke();
+        _hud.RestartRequested += () => RestartRequested?.Invoke();
+        _hud.Minimap.SetSimulation(Sim);
+        _hud.Minimap.ViewOutline = _cameraRig.ViewOutline;
+        _hud.Minimap.Clicked += _cameraRig.MoveTo;
 
         if (_session is NetworkSession online)
             HookUpNetwork(online);
@@ -120,7 +126,9 @@ public partial class MatchView : Node3D
     {
         _driver.Advance(delta);
         _renderer.Draw(Sim, _driver.Alpha);
-        _ghost.UpdatePreview(Sim, _session.LocalPlayerId, SelectedTypeId, _cameraRig.ScreenToGround(GetViewport().GetMousePosition()));
+        var overHud = GetViewport().GuiGetHoveredControl() is not null;
+        _ghost.UpdatePreview(Sim, _session.LocalPlayerId, SelectedTypeId, overHud ? null : _cameraRig.ScreenToGround(GetViewport().GetMousePosition()));
+        _hud.SetResources(Sim.Players[_session.LocalPlayerId].Gold, wood: 0, food: 0);
         _leaveConfirmTimer = Math.Max(0, _leaveConfirmTimer - delta);
 
         if (!_session.IsNetworked && Sim.Tick % Simulation.TicksPerSecond == 0 && Sim.Tick != _hashedTick)
@@ -142,7 +150,16 @@ public partial class MatchView : Node3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is InputEventKey { Pressed: true, Echo: false } key)
+        if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F10 })
+            _hud.ToggleMenu();
+        else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F11 })
+            _hud.DebugVisible = !_hud.DebugVisible;
+        else if (_hud.MenuOpen)
+        {
+            if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
+                _hud.ToggleMenu();
+        }
+        else if (@event is InputEventKey { Pressed: true, Echo: false } key)
         {
             int buildingIndex = (int)(key.Keycode - Key.Key1);
             if (buildingIndex >= 0 && buildingIndex < Sim.Catalog.BuildableTypeIds.Count)
@@ -182,6 +199,20 @@ public partial class MatchView : Node3D
             LeaveRequested?.Invoke();
         else
             _leaveConfirmTimer = LeaveConfirmSeconds;
+    }
+
+    /// <summary>The menu pauses a single player game, like Warcraft 3's; online the game goes on.</summary>
+    void OnMenuToggled(bool open)
+    {
+        if (_session.IsNetworked)
+            return;
+        if (open)
+        {
+            _pausedBeforeMenu = _driver.Paused;
+            _driver.Paused = true;
+        }
+        else
+            _driver.Paused = _pausedBeforeMenu;
     }
 
     int SelectedTypeId => _selectedBuilding >= 0 ? Sim.Catalog.BuildableTypeIds[_selectedBuilding] : -1;
@@ -226,7 +257,7 @@ public partial class MatchView : Node3D
         }
 
         var player = Sim.Players[_session.LocalPlayerId];
-        text.Append($"Gold {player.Gold}   Build:");
+        text.Append("Build:");
         var buildable = Sim.Catalog.BuildableTypeIds;
         for (int i = 0; i < buildable.Count; i++)
         {
@@ -237,13 +268,13 @@ public partial class MatchView : Node3D
         text.AppendLine();
         string team = player.Team == 0 ? "blue, left" : "red, right";
         text.AppendLine($"1-{buildable.Count} select building, LMB place on the grid in your zones ({team}), RMB/Esc cancel   " +
-            $"K +{StressSpawnPerTeam} units   " + (_session.IsNetworked ? "" : "Space pause   R restart   ") + "Esc Esc leave   WASD pan   Wheel zoom");
-        if (_notice.Length > 0)
-            text.AppendLine(_notice);
-        _hud.Text = text.ToString();
+            $"K +{StressSpawnPerTeam} units   " + (_session.IsNetworked ? "" : "Space pause   R restart   ") + "Esc Esc leave   WASD pan   Wheel zoom   F10 menu   F11 debug");
+        _hud.DebugText = text.ToString();
+        _hud.Message = _notice;
 
-        _banner.Text = _fatal
-            ?? (Sim.IsGameOver ? (Sim.WinningTeam == player.Team ? "VICTORY" : "DEFEAT") + (_session.IsNetworked ? "\nEsc to leave" : "\nR to restart, Esc to leave")
+        _hud.Banner = _fatal
+            ?? (_hud.MenuOpen ? ""
+            : Sim.IsGameOver ? (Sim.WinningTeam == player.Team ? "VICTORY" : "DEFEAT") + (_session.IsNetworked ? "\nEsc to leave" : "\nR to restart, Esc to leave")
             : _driver.IsWaiting ? "Waiting for players…"
             : _driver.Paused ? "PAUSED"
             : _leaveConfirmTimer > 0 ? "Press Esc again to leave the match"

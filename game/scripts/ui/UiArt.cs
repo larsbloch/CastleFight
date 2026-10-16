@@ -8,7 +8,7 @@ namespace CastleFight.Game.UI;
 /// check boxes. Painted once at startup into byte arrays (no per-pixel engine calls), so there are no image
 /// assets to maintain and every colour can be tuned here.
 /// </summary>
-static class UiArt
+static partial class UiArt
 {
     public enum ButtonState { Normal, Hover, Pressed, Disabled }
 

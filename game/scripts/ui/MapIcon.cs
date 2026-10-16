@@ -16,14 +16,21 @@ public partial class MapIcon : Control
     static readonly Color BaseGround = new(0.3f, 0.26f, 0.16f);
     static readonly Color Stone = new(0.78f, 0.72f, 0.58f);
 
-    MapId _map;
+    MapDefinition _definition = MapCatalog.Get(MapId.SingleLane);
 
+    /// <summary>Shows a map from the catalogue.</summary>
     public MapId Map
     {
-        get => _map;
+        set => Definition = MapCatalog.Get(value);
+    }
+
+    /// <summary>Shows any map, e.g. the one a match is running on.</summary>
+    public MapDefinition Definition
+    {
+        get => _definition;
         set
         {
-            _map = value;
+            _definition = value;
             QueueRedraw();
         }
     }
@@ -32,7 +39,7 @@ public partial class MapIcon : Control
 
     public override void _Draw()
     {
-        var map = MapCatalog.Get(_map);
+        var map = _definition;
         var area = new Rect2(Vector2.Zero, Size).Grow(-2);
         var scale = new Vector2(area.Size.X / map.LengthTiles, area.Size.Y / map.WidthTiles);
         Rect2 ToIcon(TileRect t) => new(area.Position + new Vector2(t.MinX, t.MinY) * scale, new Vector2(t.Width, t.Height) * scale);
@@ -42,7 +49,7 @@ public partial class MapIcon : Control
             DrawRect(ToIcon(terrace.Area), Grass.Lightened(0.12f * terrace.Level));
 
         // Forest between the lanes, with a scatter of darker tree tops.
-        var random = new RandomNumberGenerator { Seed = (ulong)_map + 1 };
+        var random = new RandomNumberGenerator { Seed = (ulong)map.Lanes.Count };
         foreach (var wall in map.LaneWalls)
         {
             var rect = ToIcon(wall);
