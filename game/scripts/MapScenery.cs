@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using CastleFight.Sim;
 using Godot;
@@ -5,9 +6,9 @@ using Godot;
 namespace CastleFight.Game;
 
 /// <summary>
-/// Static map visuals: terraces as solid blocks of ground, cliff walls with ramps between them, lane roads,
-/// forest walls, team build zones with a tile grid, plus light and environment. Built once per match from the
-/// <see cref="MapDefinition"/>. Sim (x, y) is world (x, height, y); see <see cref="TerrainHeights"/>.
+/// Static map visuals: grassy terraces as solid blocks of ground with dirt paths, stone cliff walls with ramps
+/// between them, forest walls, team build zones with a tile grid, plus light and environment (textures from
+/// <see cref="TerrainArt"/>). Built once per match from the <see cref="MapDefinition"/>. Sim (x, y) is world (x, height, y); see <see cref="TerrainHeights"/>.
 /// </summary>
 public partial class MapScenery : Node3D
 {
@@ -16,8 +17,8 @@ public partial class MapScenery : Node3D
     const float GroundDepth = 1f;
     const float RoadWidth = 6f;
 
-    // Base roads lie over the zone tint (so they keep their colour) and under the grid.
-    const float RoadLift = 0.025f;
+    // Share of a lane's width left as grass along each side of its dirt path.
+    const float LaneVerge = 0.12f;
 
     public void Build(MapDefinition map)
     {
@@ -32,34 +33,25 @@ public partial class MapScenery : Node3D
         AddChild(new WorldEnvironment { Environment = environment });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.1f });
 
-        // Each terrace is a block from below the lanes up to its level, so the map edge looks solid.
+        // Each terrace is a block from below the lanes up to its level, so the map edge looks solid. Terraces and
+        // ramps share one grass material with the dirt paths painted in.
+        var ground = GroundMaterial(map);
         foreach (var terrace in map.Terraces)
-        {
-            var grass = new Color(0.27f, 0.34f, 0.22f).Lightened(0.06f * terrace.Level);
-            AddBlock(terrace.Area, -GroundDepth, TerrainHeights.LevelToHeight(terrace.Level), Lit(grass));
-        }
+            AddBlock(terrace.Area, -GroundDepth, TerrainHeights.LevelToHeight(terrace.Level), ground);
+        foreach (var ramp in map.Ramps)
+            AddRamp(ramp, ground);
 
-        var road = Lit(new Color(0.42f, 0.38f, 0.28f));
-        foreach (var lane in map.Lanes)
-            AddPlane(lane.Corridor, 0.01f, road);
-        AddBaseRoads(map, road);
-
-        var forest = Lit(new Color(0.12f, 0.2f, 0.11f));
+        var forest = Triplanar(TerrainArt.Forest, TerrainArt.ForestTile);
         foreach (var wall in map.LaneWalls)
             AddBlock(wall, 0f, ForestHeight, forest);
 
-        var stone = Lit(new Color(0.62f, 0.58f, 0.48f));
+        var stone = Triplanar(TerrainArt.Stone, TerrainArt.StoneTile);
         foreach (var cliff in map.Cliffs)
         {
             float top = TerrainHeights.LevelToHeight(cliff.UpperLevel) + ParapetHeight;
             foreach (var wall in map.CliffWalls.Where(w => w.MinX == cliff.MinX))
                 AddBlock(wall, -GroundDepth, top, stone);
         }
-
-        var rampMaterial = Lit(new Color(0.45f, 0.4f, 0.3f));
-        rampMaterial.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-        foreach (var ramp in map.Ramps)
-            AddRamp(ramp, rampMaterial);
 
         var keepClear = Unshaded(new Color(0.85f, 0.12f, 0.05f, 0.45f));
         for (int team = 0; team < Simulation.TeamCount; team++)
@@ -80,43 +72,58 @@ public partial class MapScenery : Node3D
         }
     }
 
-    /// <summary>Dirt roads on the terraces: from each ramp to the next, joined up in front of the castle.</summary>
-    void AddBaseRoads(MapDefinition map, Material road)
+    static ShaderMaterial GroundMaterial(MapDefinition map)
     {
+        var size = new Vector2(map.LengthTiles, map.WidthTiles);
+        var material = new ShaderMaterial { Shader = GD.Load<Shader>("res://shaders/ground.gdshader") };
+        material.SetShaderParameter("grass_texture", TerrainArt.Grass);
+        material.SetShaderParameter("dirt_texture", TerrainArt.Dirt);
+        material.SetShaderParameter("variation_texture", TerrainArt.Variation);
+        material.SetShaderParameter("path_mask", TerrainArt.PathMask(map.LengthTiles, map.WidthTiles, Paths(map)));
+        material.SetShaderParameter("map_size", size);
+        material.SetShaderParameter("grass_tile", TerrainArt.GrassTile);
+        material.SetShaderParameter("dirt_tile", TerrainArt.DirtTile);
+        material.SetShaderParameter("variation_tile", TerrainArt.VariationTile);
+        material.SetShaderParameter("level_height", TerrainHeights.LevelHeight);
+        return material;
+    }
+
+    /// <summary>
+    /// Where the ground is dirt: each lane (with a grass verge along its sides), and on the terraces a road from
+    /// each lane over its ramps to a cross road in front of the castle, which leads on to the castle gate.
+    /// </summary>
+    static List<Rect2> Paths(MapDefinition map)
+    {
+        var paths = new List<Rect2>();
+        foreach (var lane in map.Lanes)
+        {
+            var c = lane.Corridor;
+            float verge = Mathf.Max(3f, c.Height * LaneVerge);
+            paths.Add(new Rect2(c.MinX, c.MinY + verge, c.Width, c.Height - 2f * verge));
+        }
+
         for (int team = 0; team < Simulation.TeamCount; team++)
         {
             var castle = map.CastleFootprint(team);
-            var cliffs = map.Cliffs.Where(c => team == 0 ? c.MaxX <= map.LaneMinX : c.MinX >= map.LaneMaxX)
-                .OrderBy(c => team == 0 ? c.MinX : -c.MinX).ToArray();
+            var cliffs = map.Cliffs.Where(c => team == 0 ? c.MaxX <= map.LaneMinX : c.MinX >= map.LaneMaxX).ToArray();
             if (cliffs.Length == 0)
                 continue;
 
             float castleFront = team == 0 ? castle.MaxX + 2f : castle.MinX - 2f;
+            float laneEnd = team == 0 ? map.LaneMinX : map.LaneMaxX;
             var gaps = cliffs[0].Gaps;
             foreach (var (minY, maxY) in gaps)
-            {
-                float y = (minY + maxY) * 0.5f;
-                float x0 = castleFront;
-                foreach (var cliff in cliffs)
-                {
-                    float x1 = team == 0 ? cliff.MinX : cliff.MaxX;
-                    AddRoad(x0, x1, y, TerrainHeights.LevelToHeight(cliff.UpperLevel), road);
-                    x0 = team == 0 ? cliff.MaxX : cliff.MinX;
-                }
-            }
+                paths.Add(Road(castleFront, laneEnd, (minY + maxY) * 0.5f));
 
-            // Join the roads with a cross road in front of the castle, and lead it to the castle gate.
             float firstY = (gaps[0].MinY + gaps[0].MaxY) * 0.5f, lastY = (gaps[^1].MinY + gaps[^1].MaxY) * 0.5f;
-            float castleHeight = TerrainHeights.LevelToHeight(cliffs[0].UpperLevel);
-            var cross = new Rect2(castleFront - RoadWidth / 2, firstY - RoadWidth / 2, RoadWidth, lastY - firstY + RoadWidth);
-            AddPlane(cross, castleHeight + RoadLift, road);
-            float gateX = team == 0 ? castle.MaxX : castle.MinX;
-            AddRoad(gateX, castleFront, castle.Center.Y.ToFloat(), castleHeight, road);
+            paths.Add(new Rect2(castleFront - RoadWidth / 2, firstY - RoadWidth / 2, RoadWidth, lastY - firstY + RoadWidth));
+            paths.Add(Road(team == 0 ? castle.MaxX : castle.MinX, castleFront, castle.Center.Y.ToFloat()));
         }
+        return paths;
     }
 
-    void AddRoad(float fromX, float toX, float y, float height, Material material) =>
-        AddPlane(new Rect2(Mathf.Min(fromX, toX), y - RoadWidth / 2, Mathf.Abs(toX - fromX), RoadWidth), height + RoadLift, material);
+    static Rect2 Road(float fromX, float toX, float y) =>
+        new(Mathf.Min(fromX, toX), y - RoadWidth / 2, Mathf.Abs(toX - fromX), RoadWidth);
 
     /// <summary>A wedge filling the cliff gap: sloped on top, solid down to below the lanes.</summary>
     void AddRamp(Ramp ramp, Material material)
@@ -135,6 +142,7 @@ public partial class MapScenery : Node3D
 
         var tool = new SurfaceTool();
         tool.Begin(Mesh.PrimitiveType.Triangles);
+        tool.SetSmoothGroup(uint.MaxValue); // flat faces: don't average normals across the edges
         void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
         {
             // Clockwise seen from outside (Godot's front faces).
@@ -206,7 +214,16 @@ public partial class MapScenery : Node3D
         return r.IsEmpty ? null : r;
     }
 
-    static StandardMaterial3D Lit(Color color) => new() { AlbedoColor = color, Roughness = 0.9f };
+    /// <summary>A texture projected in world space from all three axes, so boxes of any size never stretch it.</summary>
+    static StandardMaterial3D Triplanar(Texture2D texture, float tileSize) => new()
+    {
+        AlbedoTexture = texture,
+        Uv1Triplanar = true,
+        Uv1WorldTriplanar = true,
+        Uv1Scale = Vector3.One / tileSize,
+        TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic,
+        Roughness = 0.95f,
+    };
 
     static StandardMaterial3D Unshaded(Color color) => new()
     {
