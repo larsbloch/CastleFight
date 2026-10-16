@@ -13,7 +13,7 @@ Lane battle game for up to 8 players (usually 2v2 or 3v3). Godot 4.7 (.NET) + C#
 | `tools/CastleFight.Bench` | Headless stress benchmark (ms per tick at N units). |
 | `tools/CastleFight.Server` | Standalone relay server (the same relay a hosting player runs inside the game). |
 | `docs/NEXT_STEPS.md` | Roadmap and handover notes: what is done, what is next. |
-| `game/` | Godot project: menus, lobby, rendering (MultiMesh), camera, input, HUD. Reads the simulation, never changes it except through commands. |
+| `game/` | Godot project: menus, lobby, rendering (MultiMesh), map scenery with textures painted in code (`TerrainArt`), camera, input, HUD. Reads the simulation, never changes it except through commands. |
 | `game/scripts/ui` | Menus and lobby. The wooden theme is painted in code (`UiArt`, `UiTheme`) plus two shaders in `game/shaders`; fonts (OFL) are in `game/assets/fonts`. |
 
 ## Rules for code in `CastleFight.Sim`

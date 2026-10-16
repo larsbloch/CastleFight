@@ -171,6 +171,21 @@ is walls plus no-build ramps.
 - Ideas: high-ground rules (miss chance uphill, ranged units shooting over cliffs), real cliff/ramp art, trees
   on the forest walls.
 
+## Map textures (done)
+
+- `TerrainArt` paints seamless textures in code at the first match (like `UiArt`, no image files): green grass
+  with blade strokes, dirt with pebbles, cliff stone in courses of blocks with mortar and moss, forest canopy
+  (tree crowns from above), and a soft variation noise.
+- `shaders/ground.gdshader` draws every terrace block and ramp: grass on top, packed earth on the sides, and dirt
+  wherever a map-sized path mask (`TerrainArt.PathMask`, 4 px per tile) says so. The mask comes from
+  `MapScenery.Paths`: each lane with a grass verge on both sides, plus 6-wide roads from the castle over the ramps
+  into the lanes. Noise frays the path edges and a large-scale variation breaks up the tiling. The old road planes
+  are gone.
+- Cliff walls (stone) and forest walls use `StandardMaterial3D` world triplanar mapping, so blocks of any size never
+  stretch the texture. Tile sizes are `TerrainArt.*Tile` (world units per repeat).
+- Ramp wedges now have flat normals (they were smoothed across edges, which shaded them oddly).
+- To use hand-painted art later: load the image in the matching `TerrainArt` property and adjust its tile size.
+
 ## Menu and lobby UI pass (done)
 
 - **Look:** `UiTheme` builds one Godot `Theme` (fonts, colours, styles for every control type, variations such as
