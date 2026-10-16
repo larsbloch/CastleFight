@@ -195,13 +195,14 @@ is walls plus no-build ramps.
   silhouettes, embers); `shaders/gold_text.gdshader` makes the "CASTLE FIGHT" title worn gold.
 - Themes only pass down through Controls, so `App` keeps every menu under one themed full-screen `Control`
   (with the backdrop). The in-game HUD is not themed yet.
-- **Screens:** `MainMenu` (Host Game / Join Game / Options / Exit), `HostScreen` (map cards, bots per army,
-  port; *Open Lobby* or *Play Offline*), `JoinScreen` (favourite + recent servers, address form),
+- **Screens:** `MainMenu` (Host Game / Join Game / Options / Exit), `HostScreen` (map cards, port,
+  *Open Lobby*; bots are added in the lobby), `JoinScreen` (favourite + recent servers, address form),
   `OptionsScreen` (name, window mode, frame cap, vsync), `LobbyScreen` (map, both armies with open places,
   ready check, `ChatPanel`).
 - `MapIcon` draws any `MapDefinition` as an icon (lanes, forest walls, bases, build zones, castles), so new
   maps get an icon for free. `MapSelector` turns them into cards.
-- Single player is now *Host Game → Play Offline* (your allies + enemy bots from the host setup).
+- Single player is *Host Game → Open Lobby*, add bots and start. The offline `LocalSession` is only used from the
+  command line (`--map N`, `--smoke`).
 - The protocol went to version 2 for chat (see the table above).
 - Ideas: a ping per player in the lobby, kicking players, server status/ping for favourites (LiteNetLib
   unconnected messages), in-game chat, theming the HUD, sounds for clicks.

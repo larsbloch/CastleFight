@@ -38,8 +38,6 @@ public sealed class Settings
     // Hosting
     public int HostPort { get; set; } = ProtocolInfo.DefaultPort;
     public MapId HostMap { get; set; } = MapId.SingleLane;
-    public int HostBlueBots { get; set; }
-    public int HostRedBots { get; set; } = 1;
 
     // Display
     public DisplayMode DisplayMode { get; set; } = DisplayMode.Windowed;
@@ -60,8 +58,6 @@ public sealed class Settings
         settings.HostPort = file.GetValue("host", "port", settings.HostPort).AsInt32();
         var map = (MapId)file.GetValue("host", "map", (int)settings.HostMap).AsInt32();
         settings.HostMap = MapCatalog.IsValid(map) ? map : MapId.SingleLane;
-        settings.HostBlueBots = file.GetValue("host", "blue_bots", settings.HostBlueBots).AsInt32();
-        settings.HostRedBots = file.GetValue("host", "red_bots", settings.HostRedBots).AsInt32();
         settings.DisplayMode = (DisplayMode)Math.Clamp(file.GetValue("display", "mode", (int)settings.DisplayMode).AsInt32(), 0, 2);
         settings.VSync = file.GetValue("display", "vsync", settings.VSync).AsBool();
         settings.MaxFps = file.GetValue("display", "max_fps", settings.MaxFps).AsInt32();
@@ -78,8 +74,6 @@ public sealed class Settings
         file.SetValue("net", "recent", SaveServers(Recent));
         file.SetValue("host", "port", HostPort);
         file.SetValue("host", "map", (int)HostMap);
-        file.SetValue("host", "blue_bots", HostBlueBots);
-        file.SetValue("host", "red_bots", HostRedBots);
         file.SetValue("display", "mode", (int)DisplayMode);
         file.SetValue("display", "vsync", VSync);
         file.SetValue("display", "max_fps", MaxFps);

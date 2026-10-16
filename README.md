@@ -39,17 +39,16 @@ ramps), so building at the top or bottom of the base picks the lane. Nothing can
 
 Controls: `1`-`4` choose a building, a green ghost shows where it goes (amber: not enough gold, red: blocked),
 left click places it, right click or `Esc` cancels. `WASD` pans, the mouse wheel zooms, `K` spawns a stress wave.
-`Esc` twice leaves the match. Offline only: `Space` pauses, `R` restarts.
+`Esc` twice leaves the match. Offline (command line `--map N`) only: `Space` pauses, `R` restarts.
 
 Main menu: **Host Game**, **Join Game**, **Options** (name, window mode, frame cap, vsync), **Exit**. Settings,
 favourite servers and the last host setup are saved in `settings.cfg` in the Godot user folder.
 
 ### Multiplayer
 
-- **Host:** *Host Game*, pick the map and how many bots fight with and against you, then *Open Lobby*. Your game
-  runs the relay on UDP port **7777** (changeable there). Players outside your network need that UDP port
-  forwarded to your PC (and allowed through the Windows firewall). *Play Offline* starts the same setup against
-  bots on your PC only.
+- **Host:** *Host Game*, pick the map, then *Open Lobby* and add as many bots as you like there. Your game runs
+  the relay on UDP port **7777** (changeable there). Players outside your network need that UDP port forwarded
+  to your PC (and allowed through the Windows firewall). To play alone, open a lobby, add bots and start.
 - **Join:** *Join Game*, pick a favourite or recent server (double-click joins) or type an address and port.
   *Save as Favorite* keeps it in the list.
 - **Lobby:** both armies with their open places, the map, a ready check and chat. Everyone can switch army and
