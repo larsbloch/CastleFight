@@ -83,7 +83,7 @@ the state hash.
 
 ### Placement
 
-`Command.PlaceBuilding(player, type, tileX, tileY)` (the footprint's lowest tile). The sim keeps a tile
+`Command.PlaceBuilding(player, type, tileX, tileY)` (the footprint's lowest tile; since then players build with their builder, see "Builder"). The sim keeps a tile
 occupancy array (derived state, checked by `ValidateOccupancy` in tests), and `CheckPlacement` says why a spot
 is invalid (outside zone / occupied / not enough gold). Godot draws a tile grid over the build zones and a
 green/amber/red ghost.
@@ -225,12 +225,39 @@ top-bar buttons (theme variations `HudButton`, `HudWell`, `HudSlot`, `HudResourc
 - **Bottom console:** a castle wall with battlements. Left tower: `Minimap` (a `MapIcon` letterboxed to the map's
   aspect, blue/red dots per unit and squares per building, refreshed 10 times a second; dense crowds are drawn as one
   dot per cell; click/drag moves the camera). Middle: an arched portrait frame and the unit stats well (both empty).
-  Right tower (taller than the left one): inventory (2x3) and the command card (4 wide, 3 high), all empty for now.
+  Right tower (taller than the left one): inventory (2x3) and the **command HUD** (4 wide, 3 high; that is what we
+  call it, not "command card").
 - Only the stone takes the mouse (`GameHud._HasPoint`); clicks and the wheel anywhere else go to the game, and the
   placement ghost hides while the mouse is over the HUD.
 - The window now uses `canvas_items` scaling in matches as well (it used to be off), so the HUD is laid out at
   1600x900 or wider and scales up crisply. 3D still renders at the window's resolution.
-- Next: fill the command card with the build buttons (replacing the 1-4 keys), selection with portrait + stats, HP bars.
+- Next: HP bars, selecting other things than the builder (buildings, units).
+
+## Builder (done)
+
+Every player has one builder; buildings are no longer placed instantly by the player.
+
+- **Sim** (`Builder.cs`, `Simulation.Builders.cs`): `Player.Builder` holds position, destination, order
+  (`Idle`, `Move`, `GoToSite`, `Construct`), the site and the progress; all of it is in the state hash. Builders are
+  not units: they are not in `UnitPool`, cannot be attacked, do not collide and walk in a straight line over walls and
+  cliffs at 8 tiles/s (`Simulation.BuilderSpeed`). They start in front of their castle, 2 tiles apart.
+- **Commands:** `MoveBuilder(player, position)` (the position goes in `TileX`/`TileY` in steps of 1/16 tile, so the
+  wire format is unchanged) and `Build(player, type, tileX, tileY)`. A build order must pass `CheckPlacement` when
+  given; the builder walks to the middle of the site and checks again there. If the spot is taken (or gold ran out) it
+  gives up (`BuildFailedTick`/`BuildFailure`, shown as a message). Otherwise it pays and constructs: after
+  `Simulation.BuildTicks` (5 s) standing on the site the building appears. Any new order before that abandons the
+  site and refunds the gold. A site under construction counts as occupied for everyone.
+- `PlaceBuilding` (instant) is still there for tests and the bench. `ScriptedBot` now sends its builder when it is
+  idle.
+- **Godot:** `BuilderView` draws a spinning star per builder (team colour), a green ring under the selected local
+  builder, a rising box on each construction site and a faint marker where the local builder is heading to build.
+  Builders are diamonds on the minimap.
+- **Controls:** the builder starts selected. LMB on the builder selects it, LMB anywhere else deselects. RMB moves it.
+  While it is selected the command HUD shows the 4 buildings (slots 1-4, name, cost in red if you can't afford it;
+  `CommandButton`), hotkeys 1-4. Picking one starts placing (the placement ghost); LMB orders the build, RMB/Esc
+  cancels. The portrait shows the star and the stats well what the builder is doing.
+- Ideas: building queues (Shift), keep the builder from walking into the enemy base, real pathing if the builder
+  should respect cliffs, a hotkey to select the builder (F1), a model instead of the star.
 
 ## Later steps (in rough order)
 
@@ -240,7 +267,7 @@ top-bar buttons (theme variations `HudButton`, `HudWell`, `HudSlot`, `HudResourc
 6. **Gameplay design (needs the owner's input).** Races and their buildings/units/tiers, the income
    model (Castle Fight style income/treasure), armor/attack types, projectiles, splash, auras/heals/slows,
    more `UnitBehavior`s. With 8 players there are more buildings, so watch total unit counts.
-7. **Visuals.** See the visuals plan below. Also HP bars, build menu (on the HUD command card), end-of-game score screen
+7. **Visuals.** See the visuals plan below. Also HP bars, end-of-game score screen
    (the placement ghost and tile grid were done in step 4).
 8. **Distribution.** Icon, version numbering, Steam (Steamworks relay/matchmaking removes port forwarding).
 

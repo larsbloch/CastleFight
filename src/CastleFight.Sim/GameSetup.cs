@@ -1,3 +1,5 @@
+using CastleFight.Sim.FixedMath;
+
 namespace CastleFight.Sim;
 
 /// <summary>Everything every client must agree on before tick 0.</summary>
@@ -17,14 +19,16 @@ public sealed record GameSetup(ulong Seed, IReadOnlyList<byte> PlayerTeams)
 
 public sealed class Player
 {
-    internal Player(int id, byte team, int gold)
+    internal Player(int id, byte team, int gold, FixVec2 builderPosition)
     {
         Id = id;
         Team = team;
         Gold = gold;
+        Builder = new Builder(builderPosition);
     }
 
     public int Id { get; }
     public byte Team { get; }
     public int Gold { get; internal set; }
+    public Builder Builder { get; }
 }

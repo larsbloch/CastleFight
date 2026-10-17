@@ -7,7 +7,7 @@ namespace CastleFight.Game.UI;
 /// <summary>
 /// The in-match HUD in the style of Warcraft 3. A stone top bar with the Menu and Debug buttons, a medallion and
 /// gold / wood / food on the right. At the bottom a castle wall of stone: a tower with the minimap on the left, the
-/// portrait and unit stats in the middle, and a tower with the inventory and command card on the right.
+/// portrait and unit stats in the middle, and a tower with the inventory and the command HUD (4x3 slots) on the right.
 /// The stone is drawn here; only the stone (and the controls on it) catch the mouse, the rest falls through to the
 /// game. Laid out in menu units (the window is scaled so the HUD is at least 1600x900, see <c>App</c>).
 /// </summary>
@@ -15,7 +15,7 @@ public partial class GameHud : Control
 {
     const float TopBarHeight = 34;
     const float TowerHeight = 206;
-    const float CommandTowerHeight = 260; // the right tower is taller to fit the command card
+    const float CommandTowerHeight = 260; // the right tower is taller to fit the command HUD
     const float WallHeight = 170;
     const float MerlonWidth = 40, MerlonHeight = 20, MerlonGap = 20;
     const float Pad = 16;
@@ -52,6 +52,10 @@ public partial class GameHud : Control
     readonly Label _inventoryLabel = new() { Text = "Inventory", ThemeTypeVariation = "HudPlaqueLabel", HorizontalAlignment = HorizontalAlignment.Center };
     readonly List<PanelContainer> _inventorySlots = new();
     readonly List<PanelContainer> _commandSlots = new();
+    readonly List<CommandButton> _commandButtons = new();
+    readonly Label _selectionName = new() { ThemeTypeVariation = "HudPlaqueLabel", MouseFilter = MouseFilterEnum.Ignore };
+    readonly Label _selectionStatus = new() { ThemeTypeVariation = "HudDebugLabel", MouseFilter = MouseFilterEnum.Ignore, AutowrapMode = TextServer.AutowrapMode.WordSmart };
+    Color? _portraitStar;
     readonly Control _menu = new() { Visible = false };
 
     // Stone shapes from the last layout, for drawing and for deciding which clicks the HUD takes.
@@ -68,6 +72,9 @@ public partial class GameHud : Control
     public event Action<bool>? DebugToggled;
     public event Action? LeaveRequested;
     public event Action? RestartRequested;
+
+    /// <summary>A command HUD button was clicked; the argument is the slot (0..11, row by row).</summary>
+    public event Action<int>? CommandPressed;
 
     public bool MenuOpen => _menu.Visible;
 
@@ -124,13 +131,24 @@ public partial class GameHud : Control
         AddChild(_minimapWell);
         AddChild(Minimap);
         AddChild(_statsWell);
+        var selection = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+        selection.AddChild(_selectionName);
+        selection.AddChild(_selectionStatus);
+        _statsWell.AddChild(selection);
         AddChild(_inventoryWell);
         AddChild(_inventoryLabel);
         AddChild(_commandWell);
         for (int i = 0; i < InventoryColumns * InventoryRows; i++)
             _inventorySlots.Add(AddSlot());
         for (int i = 0; i < CommandColumns * CommandRows; i++)
+        {
             _commandSlots.Add(AddSlot());
+            var button = new CommandButton();
+            int slot = i;
+            button.Pressed += () => CommandPressed?.Invoke(slot);
+            AddChild(button);
+            _commandButtons.Add(button);
+        }
 
         BuildMenu();
         Resized += Layout;
@@ -187,6 +205,27 @@ public partial class GameHud : Control
         SetValue(ResourceKind.Food, food);
     }
 
+    /// <summary>Fills the command HUD from slot 0 (top left), row by row; the remaining slots stay empty.</summary>
+    public void SetCommands(ReadOnlySpan<CommandInfo> commands)
+    {
+        for (int i = 0; i < _commandButtons.Count; i++)
+            _commandButtons[i].SetCommand(i < commands.Length ? commands[i] : null);
+    }
+
+    /// <summary>What is selected: a name and a status line in the stats well, and a star in the portrait. Null clears it.</summary>
+    public void SetSelection(string? name, string status, Color? portraitStar)
+    {
+        if (_selectionName.Text != (name ?? ""))
+            _selectionName.Text = name ?? "";
+        if (_selectionStatus.Text != status)
+            _selectionStatus.Text = status;
+        if (_portraitStar != portraitStar)
+        {
+            _portraitStar = portraitStar;
+            QueueRedraw();
+        }
+    }
+
     void SetValue(ResourceKind kind, int value)
     {
         string text = value.ToString();
@@ -216,13 +255,15 @@ public partial class GameHud : Control
         Place(Minimap, minimap.Grow(-UiArt.WellMargin + 2));
         Place(_message, new Rect2(12, h - TowerHeight - MerlonHeight - 110, 900, 100));
 
-        // Right tower: inventory and the command card.
+        // Right tower: inventory and the command HUD.
         var commandSize = SlotGrid(CommandColumns, CommandRows, CommandSlot, CommandGap);
         var inventorySize = SlotGrid(InventoryColumns, InventoryRows, InventorySlot, InventoryGap);
         float rightWidth = Pad + inventorySize.X + 12 + commandSize.X + Pad;
         _rightTower = new Rect2(w - rightWidth, h - CommandTowerHeight, rightWidth, CommandTowerHeight);
         var commands = new Rect2(w - Pad - commandSize.X, h - 12 - commandSize.Y, commandSize);
         PlaceSlots(_commandWell, _commandSlots, commands, CommandColumns, CommandSlot, CommandGap);
+        for (int i = 0; i < _commandButtons.Count; i++)
+            Place(_commandButtons[i], new Rect2(_commandSlots[i].Position, _commandSlots[i].Size));
         var inventory = new Rect2(commands.Position.X - 12 - inventorySize.X, h - 12 - inventorySize.Y, inventorySize);
         PlaceSlots(_inventoryWell, _inventorySlots, inventory, InventoryColumns, InventorySlot, InventoryGap);
         Place(_inventoryLabel, new Rect2(inventory.Position.X - 10, inventory.Position.Y - 24, inventory.Size.X + 20, 22));
@@ -323,6 +364,21 @@ public partial class GameHud : Control
         DrawPolyline([.. well, well[0]], Bronze, 4, true);
         var rim = Arch(_portrait.Grow(-2.5f), PortraitArch - 2.5f);
         DrawPolyline([.. rim, rim[0]], Edge, 1.2f, true);
+
+        if (_portraitStar is { } color)
+        {
+            var star = Star(_portrait.GetCenter() + new Vector2(0, 8), 52, 22);
+            DrawColoredPolygon(star, color);
+            DrawPolyline([.. star, star[0]], Edge, 2, true);
+        }
+    }
+
+    static Vector2[] Star(Vector2 center, float outer, float inner)
+    {
+        var points = new Vector2[10];
+        for (int i = 0; i < points.Length; i++)
+            points[i] = center + Vector2.FromAngle(i * Mathf.Tau / points.Length - Mathf.Pi / 2) * (i % 2 == 0 ? outer : inner);
+        return points;
     }
 
     void DrawTopBar()
