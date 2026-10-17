@@ -10,6 +10,9 @@ public enum PlacementResult : byte
     Occupied,
     NotEnoughGold,
     OnRamp,
+
+    /// <summary>The builder can't get next to the site.</summary>
+    Unreachable,
 }
 
 /// <summary>
@@ -147,13 +150,16 @@ public sealed partial class Simulation
     /// <summary>
     /// Whether <paramref name="playerId"/> can place <paramref name="typeId"/> with its footprint's lowest
     /// tile at (<paramref name="tileX"/>, <paramref name="tileY"/>): enough gold, the footprint inside one of
-    /// the team's build zones, off the ramps and free (no building or construction site). Adjacent buildings are fine.
+    /// the team's build zones, off the ramps and free (no building, construction site or builder building there).
+    /// Adjacent buildings are fine.
     /// </summary>
     public bool CanPlaceBuilding(int playerId, int typeId, int tileX, int tileY) =>
         CheckPlacement(playerId, typeId, tileX, tileY) == PlacementResult.Ok;
 
     /// <summary>Like <see cref="CanPlaceBuilding"/>, but says why not (for the placement preview).</summary>
-    public PlacementResult CheckPlacement(int playerId, int typeId, int tileX, int tileY)
+    /// <param name="queued">For a queued build order: the sites the player's builder is already heading for or has
+    /// queued count as occupied too.</param>
+    public PlacementResult CheckPlacement(int playerId, int typeId, int tileX, int tileY, bool queued = false)
     {
         if (IsGameOver || (uint)playerId >= (uint)_players.Length || (uint)typeId >= (uint)Catalog.Count)
             return PlacementResult.Invalid;
@@ -177,7 +183,7 @@ public sealed partial class Simulation
                     return PlacementResult.Occupied;
             }
         }
-        if (OverlapsConstruction(footprint))
+        if (OverlapsConstruction(footprint) || (queued && OverlapsPlannedSite(player.Builder, footprint)))
             return PlacementResult.Occupied;
         return player.Gold < type.Cost ? PlacementResult.NotEnoughGold : PlacementResult.Ok;
     }
@@ -296,6 +302,7 @@ public sealed partial class Simulation
 
     void MarkFootprint(int slot, int value)
     {
+        _obstacleVersion++;
         int size = Catalog[Units.Type[slot]].FootprintTiles;
         var (originX, originY) = FootprintOrigin(Units.Pos[slot], size);
         for (int y = Math.Max(originY, 0); y < Math.Min(originY + size, Map.WidthTiles); y++)

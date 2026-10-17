@@ -37,8 +37,12 @@ Each team shares the build zones on both terraces. Units walk to the lane closes
 ramps), so building at the top or bottom of the base picks the lane. Nothing can be built on a ramp or its landings
 (shown red).
 
-Controls: `1`-`4` choose a building, a green ghost shows where it goes (amber: not enough gold, red: blocked),
-left click places it, right click or `Esc` cancels. `WASD` pans, the mouse wheel zooms, `K` spawns a stress wave.
+Controls: `F1` (or a left click on it) selects your builder; right click sends it somewhere (green circles mark the
+spot). It walks around walls, cliffs and buildings. `1`-`4` choose a building, a green ghost shows where it goes (amber:
+not enough gold, red: blocked), left click places it, right click or `Esc` cancels. The builder walks next to the site
+and builds it from there. Hold `Shift` while placing or right-clicking to queue the order after the builder's others
+(the building stays picked, so you can place several); without `Shift` an order replaces all of them.
+`WASD` pans, the mouse wheel zooms, `K` spawns a stress wave.
 `Esc` twice leaves the match. `F10` (or the **Menu** button) opens the in-game menu, `F11` (or **Debug**) shows or hides
 the debug readout. Click or drag on the minimap to move the camera. Offline (command line `--map N`) only: `Space`
 pauses, `R` restarts, and the menu pauses the game.

@@ -61,6 +61,20 @@ public sealed partial class Simulation
             sink.Add("progress", builder.BuildProgress);
             sink.Add("failedTick", builder.BuildFailedTick);
             sink.Add("failure", (long)builder.BuildFailure);
+            sink.Add("path", builder.Path.Count);
+            foreach (var point in builder.Path)
+            {
+                sink.Add("pathX", point.X.Raw);
+                sink.Add("pathY", point.Y.Raw);
+            }
+            sink.Add("queue", builder.Queue.Count);
+            foreach (var task in builder.Queue)
+            {
+                sink.Add("taskKind", (long)task.Kind);
+                sink.Add("taskX", task.Kind == BuilderTaskKind.Move ? task.Destination.X.Raw : task.TileX);
+                sink.Add("taskY", task.Kind == BuilderTaskKind.Move ? task.Destination.Y.Raw : task.TileY);
+                sink.Add("taskType", task.TypeId);
+            }
             sink.EndRecord();
         }
 

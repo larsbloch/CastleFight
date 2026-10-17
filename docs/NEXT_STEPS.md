@@ -238,26 +238,38 @@ top-bar buttons (theme variations `HudButton`, `HudWell`, `HudSlot`, `HudResourc
 Every player has one builder; buildings are no longer placed instantly by the player.
 
 - **Sim** (`Builder.cs`, `Simulation.Builders.cs`): `Player.Builder` holds position, destination, order
-  (`Idle`, `Move`, `GoToSite`, `Construct`), the site and the progress; all of it is in the state hash. Builders are
-  not units: they are not in `UnitPool`, cannot be attacked, do not collide and walk in a straight line over walls and
-  cliffs at 8 tiles/s (`Simulation.BuilderSpeed`). They start in front of their castle, 2 tiles apart.
-- **Commands:** `MoveBuilder(player, position)` (the position goes in `TileX`/`TileY` in steps of 1/16 tile, so the
-  wire format is unchanged) and `Build(player, type, tileX, tileY)`. A build order must pass `CheckPlacement` when
-  given; the builder walks to the middle of the site and checks again there. If the spot is taken (or gold ran out) it
-  gives up (`BuildFailedTick`/`BuildFailure`, shown as a message). Otherwise it pays and constructs: after
-  `Simulation.BuildTicks` (5 s) standing on the site the building appears. Any new order before that abandons the
-  site and refunds the gold. A site under construction counts as occupied for everyone.
+  (`Idle`, `Move`, `GoToSite`, `Construct`), the site, the progress, the path and the queue; all of it is in the state
+  hash. Builders are not units: they are not in `UnitPool`, cannot be attacked and do not collide with units. They
+  start in front of their castle, 2 tiles apart, and walk at 8 tiles/s (`Simulation.BuilderSpeed`).
+- **Pathing:** A* over tiles (8 directions, no cutting corners) around walls, cliffs, buildings and construction sites,
+  then straightened wherever a direct line keeps 3/8 tile clear of them and a whole tile clear of walls (`PlanPath`).
+  Tiles touching a wall cost a bit more, so the wide star keeps off cliffs and uses the middle of ramps. A walking builder plans again
+  whenever a building or site appears or goes (`_obstacleVersion`). A move into a wall ends as close as it can get; a
+  builder that a building was finished on top of walks out of it.
+- **Commands:** `MoveBuilder(player, position, queued)` (the position goes in `TileX`/`TileY` in steps of 1/16 tile)
+  and `Build(player, type, tileX, tileY, queued)`; `queued` is `Command.QueuedFlag` in `Count`, so the wire format is
+  unchanged (protocol 3). Without it an order clears the queue and replaces the current order (abandoning a site
+  under construction refunds the gold); with it the order waits in `Builder.Queue` (at most
+  `Simulation.MaxQueuedOrders`) until the others are done. A build order must pass `CheckPlacement` when given; a
+  queued one may wait for the gold but must not overlap the builder's other planned sites (`CheckPlacement(...,
+  queued: true)`). The builder walks to the nearest free tile next to the site (corners count) and checks again there.
+  If the spot is taken, gold ran out or no tile next to it can be reached, it gives up (`BuildFailedTick`/
+  `BuildFailure`, shown as a message) and goes on with its queue. Otherwise it pays and constructs: after
+  `Simulation.BuildTicks` (5 s) the building appears. A site under construction and the tile its builder stands on
+  count as occupied for everyone.
 - `PlaceBuilding` (instant) is still there for tests and the bench. `ScriptedBot` now sends its builder when it is
   idle.
 - **Godot:** `BuilderView` draws a spinning star per builder (team colour), a green ring under the selected local
-  builder, a rising box on each construction site and a faint marker where the local builder is heading to build.
-  Builders are diamonds on the minimap.
-- **Controls:** the builder starts selected. LMB on the builder selects it, LMB anywhere else deselects. RMB moves it.
-  While it is selected the command HUD shows the 4 buildings (slots 1-4, name, cost in red if you can't afford it;
-  `CommandButton`), hotkeys 1-4. Picking one starts placing (the placement ghost); LMB orders the build, RMB/Esc
-  cancels. The portrait shows the star and the stats well what the builder is doing.
-- Ideas: building queues (Shift), keep the builder from walking into the enemy base, real pathing if the builder
-  should respect cliffs, a hotkey to select the builder (F1), a model instead of the star.
+  builder, a rising box on each construction site and faint boxes on the sites the local builder is heading to or has
+  queued. `MoveMarker` shows where a right click sent it: green circles closing in for 2 s, then fading out. Builders
+  are diamonds on the minimap.
+- **Controls:** the builder starts selected. `F1` or LMB on the builder selects it, LMB anywhere else deselects. RMB
+  moves it. While it is selected the command HUD shows the 4 buildings (slots 1-4, name, cost in red if you can't
+  afford it; `CommandButton`), hotkeys 1-4. Picking one starts placing (the placement ghost); LMB orders the build,
+  RMB/Esc cancels. Shift+LMB / Shift+RMB queue instead; after Shift+LMB the building stays picked. The portrait shows
+  the star and the stats well what the builder is doing and how many orders are queued.
+- Ideas: keep the builder from walking into the enemy base, show the queued path and moves, a second `F1` press
+  centres the camera on the builder, a model instead of the star.
 
 ## Later steps (in rough order)
 

@@ -10,7 +10,7 @@ public enum CommandKind : byte
     /// <summary>Spawns <see cref="Command.Count"/> units in the player's staging area. For stress tests.</summary>
     DebugSpawn = 2,
 
-    /// <summary>Sends the player's builder to <see cref="Command.Position"/>, cancelling what it was doing.</summary>
+    /// <summary>Sends the player's builder to <see cref="Command.Position"/>, cancelling what it was doing (unless queued).</summary>
     MoveBuilder = 3,
 
     /// <summary>Sends the builder to build <see cref="Command.TypeId"/> with its lowest tile at (TileX, TileY).</summary>
@@ -23,22 +23,29 @@ public enum CommandKind : byte
 /// </summary>
 /// <param name="TileX">PlaceBuilding, Build: the footprint's lowest tile (min corner). MoveBuilder: the destination
 /// in steps of 1/<see cref="PositionSteps"/> tile.</param>
+/// <param name="Count">DebugSpawn: how many units. MoveBuilder, Build: <see cref="QueuedFlag"/> or 0.</param>
 public readonly record struct Command(int PlayerId, CommandKind Kind, ushort TypeId, short TileX, short TileY, int Count)
 {
     public const int PositionSteps = 16;
+
+    /// <summary>Builder orders: wait until the builder's other orders are done instead of replacing them (Shift).</summary>
+    public const int QueuedFlag = 1;
 
     /// <summary>Puts the building down at once, without the builder. For tests and benchmarks.</summary>
     public static Command PlaceBuilding(int playerId, ushort typeId, int tileX, int tileY) =>
         new(playerId, CommandKind.PlaceBuilding, typeId, ClampToShort(tileX), ClampToShort(tileY), 0);
 
-    public static Command Build(int playerId, ushort typeId, int tileX, int tileY) =>
-        new(playerId, CommandKind.Build, typeId, ClampToShort(tileX), ClampToShort(tileY), 0);
+    public static Command Build(int playerId, ushort typeId, int tileX, int tileY, bool queued = false) =>
+        new(playerId, CommandKind.Build, typeId, ClampToShort(tileX), ClampToShort(tileY), queued ? QueuedFlag : 0);
 
-    public static Command MoveBuilder(int playerId, FixVec2 destination) =>
-        new(playerId, CommandKind.MoveBuilder, 0, ToSteps(destination.X), ToSteps(destination.Y), 0);
+    public static Command MoveBuilder(int playerId, FixVec2 destination, bool queued = false) =>
+        new(playerId, CommandKind.MoveBuilder, 0, ToSteps(destination.X), ToSteps(destination.Y), queued ? QueuedFlag : 0);
 
     /// <summary>MoveBuilder: the destination.</summary>
     public FixVec2 Position => new(Fix.FromRatio(TileX, PositionSteps), Fix.FromRatio(TileY, PositionSteps));
+
+    /// <summary>MoveBuilder, Build: the order joins the builder's queue instead of replacing its orders.</summary>
+    public bool IsQueued => (Count & QueuedFlag) != 0;
 
     static short ToSteps(Fix value) => ClampToShort((int)Math.Clamp(value.Raw * PositionSteps >> Fix.FractionalBits, int.MinValue, int.MaxValue));
 
