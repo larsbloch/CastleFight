@@ -3,7 +3,7 @@ using CastleFight.Sim.FixedMath;
 namespace CastleFight.Sim.Bots;
 
 /// <summary>
-/// Placeholder opponent: every two seconds it tries to buy a random building in its zone.
+/// Placeholder opponent: every two seconds, if its builder is free, it sends it to build a random building in its zones.
 /// It only reads the simulation and produces commands, exactly like a human player's input.
 /// </summary>
 public sealed class ScriptedBot
@@ -30,7 +30,7 @@ public sealed class ScriptedBot
         var buildable = sim.Catalog.BuildableTypeIds;
         int typeId = buildable[_rng.NextInt(buildable.Count)];
         var player = sim.Players[PlayerId];
-        if (player.Gold < sim.Catalog[typeId].Cost)
+        if (player.Builder.IsBusy || player.Gold < sim.Catalog[typeId].Cost)
             return false;
 
         var zones = sim.Map.BuildZones(player.Team);
@@ -54,7 +54,7 @@ public sealed class ScriptedBot
             int tileY = zone.MinY + _rng.NextInt(zone.Height - size + 1);
             if (sim.CanPlaceBuilding(PlayerId, typeId, tileX, tileY))
             {
-                command = Command.PlaceBuilding(PlayerId, (ushort)typeId, tileX, tileY);
+                command = Command.Build(PlayerId, (ushort)typeId, tileX, tileY);
                 return true;
             }
         }

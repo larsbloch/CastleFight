@@ -78,7 +78,7 @@ public sealed partial class Simulation
             byte team = setup.PlayerTeams[i];
             if (team >= TeamCount)
                 throw new ArgumentException($"Player {i} has invalid team {team}.", nameof(setup));
-            _players[i] = new Player(i, team, setup.StartingGold);
+            _players[i] = new Player(i, team, setup.StartingGold, BuilderStart(setup.PlayerTeams, i));
         }
 
         _halfFootprintOfType = new Fix[Catalog.Count];
@@ -127,6 +127,7 @@ public sealed partial class Simulation
                 player.Gold += _incomePerSecond;
         }
 
+        StepBuilders();
         RunSpawners();
 
         for (byte team = 0; team < TeamCount; team++)
@@ -146,7 +147,7 @@ public sealed partial class Simulation
     /// <summary>
     /// Whether <paramref name="playerId"/> can place <paramref name="typeId"/> with its footprint's lowest
     /// tile at (<paramref name="tileX"/>, <paramref name="tileY"/>): enough gold, the footprint inside one of
-    /// the team's build zones, off the ramps and free. Adjacent buildings are fine.
+    /// the team's build zones, off the ramps and free (no building or construction site). Adjacent buildings are fine.
     /// </summary>
     public bool CanPlaceBuilding(int playerId, int typeId, int tileX, int tileY) =>
         CheckPlacement(playerId, typeId, tileX, tileY) == PlacementResult.Ok;
@@ -176,6 +177,8 @@ public sealed partial class Simulation
                     return PlacementResult.Occupied;
             }
         }
+        if (OverlapsConstruction(footprint))
+            return PlacementResult.Occupied;
         return player.Gold < type.Cost ? PlacementResult.NotEnoughGold : PlacementResult.Ok;
     }
 
@@ -225,6 +228,11 @@ public sealed partial class Simulation
                     Fix.FromInt(command.TileX * 2 + type.FootprintTiles) / 2,
                     Fix.FromInt(command.TileY * 2 + type.FootprintTiles) / 2);
                 SpawnUnit(command.TypeId, player.Team, (byte)player.Id, center);
+                break;
+
+            case CommandKind.MoveBuilder:
+            case CommandKind.Build:
+                ApplyBuilderCommand(player, in command);
                 break;
 
             case CommandKind.DebugSpawn:

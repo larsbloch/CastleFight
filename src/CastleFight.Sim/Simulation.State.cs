@@ -49,6 +49,18 @@ public sealed partial class Simulation
         {
             sink.Add("player", player.Id);
             sink.Add("gold", player.Gold);
+            var builder = player.Builder;
+            sink.Add("builderX", builder.Pos.X.Raw);
+            sink.Add("builderY", builder.Pos.Y.Raw);
+            sink.Add("destX", builder.Destination.X.Raw);
+            sink.Add("destY", builder.Destination.Y.Raw);
+            sink.Add("order", (long)builder.Order);
+            sink.Add("buildType", builder.BuildTypeId);
+            sink.Add("siteX", builder.BuildTileX);
+            sink.Add("siteY", builder.BuildTileY);
+            sink.Add("progress", builder.BuildProgress);
+            sink.Add("failedTick", builder.BuildFailedTick);
+            sink.Add("failure", (long)builder.BuildFailure);
             sink.EndRecord();
         }
 

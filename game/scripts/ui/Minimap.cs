@@ -6,7 +6,7 @@ namespace CastleFight.Game.UI;
 
 /// <summary>
 /// The map in the bottom-left corner: the terrain (a <see cref="MapIcon"/> letterboxed to the map's aspect), a dot
-/// per unit and a square per building in team colours. Click or drag to move the camera.
+/// per unit, a square per building and a diamond per builder in team colours. Click or drag to move the camera.
 /// </summary>
 public partial class Minimap : Control
 {
@@ -107,6 +107,16 @@ public partial class Minimap : Control
                 continue;
             _stamps[team][cell] = _frame;
             _units.DrawRect(new Rect2(at - Vector2.One * (DotSize / 2), Vector2.One * DotSize), DotColors[team]);
+        }
+
+        // Builders on top, as bright diamonds.
+        foreach (var player in _sim.Players)
+        {
+            var pos = player.Builder.Pos;
+            var at = ToMinimap(new Vector2(pos.X.ToFloat(), pos.Y.ToFloat()));
+            Vector2[] diamond = [at + new Vector2(0, -4), at + new Vector2(4, 0), at + new Vector2(0, 4), at + new Vector2(-4, 0)];
+            _units.DrawColoredPolygon(diamond, DotColors[player.Team].Lightened(0.5f));
+            _units.DrawPolyline([.. diamond, diamond[0]], Colors.Black, 1);
         }
     }
 
