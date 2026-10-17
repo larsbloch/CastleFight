@@ -6,8 +6,7 @@ namespace CastleFight.Game.UI;
 
 /// <summary>
 /// The map in the bottom-left corner: the terrain (a <see cref="MapIcon"/> letterboxed to the map's aspect), a dot
-/// per unit and a square per building in team colours, and the camera's view as an outline. Click or drag to move
-/// the camera.
+/// per unit and a square per building in team colours. Click or drag to move the camera.
 /// </summary>
 public partial class Minimap : Control
 {
@@ -19,7 +18,6 @@ public partial class Minimap : Control
 
     readonly MapIcon _terrain = new();
     readonly Control _units = new() { MouseFilter = MouseFilterEnum.Ignore };
-    readonly Control _view = new() { MouseFilter = MouseFilterEnum.Ignore };
     Simulation? _sim;
     Rect2 _area;
     double _refreshTimer;
@@ -29,9 +27,6 @@ public partial class Minimap : Control
     int _stampColumns;
     int _frame;
 
-    /// <summary>The ground the camera sees, as four map points (x, y) in screen order, or null.</summary>
-    public Func<Vector2[]?>? ViewOutline { get; set; }
-
     /// <summary>The player clicked or dragged on the map; the point is in map units.</summary>
     public event Action<Vector2>? Clicked;
 
@@ -40,9 +35,7 @@ public partial class Minimap : Control
         ClipContents = true;
         AddChild(_terrain);
         AddChild(_units);
-        AddChild(_view);
         _units.Draw += DrawUnits;
-        _view.Draw += DrawView;
         Resized += Layout;
     }
 
@@ -61,7 +54,7 @@ public partial class Minimap : Control
         float aspect = _sim.Map.LengthTiles / (float)_sim.Map.WidthTiles;
         var size = Size.X / Size.Y > aspect ? new Vector2(Size.Y * aspect, Size.Y) : new Vector2(Size.X, Size.X / aspect);
         var box = new Rect2((Size - size) / 2, size);
-        _units.Size = _view.Size = Size;
+        _units.Size = Size;
         _terrain.Position = box.Position;
         _terrain.Size = box.Size;
         _area = box.Grow(-2); // MapIcon draws the map inset by 2
@@ -74,7 +67,6 @@ public partial class Minimap : Control
 
     public override void _Process(double delta)
     {
-        _view.QueueRedraw();
         _refreshTimer -= delta;
         if (_refreshTimer > 0)
             return;
@@ -116,17 +108,6 @@ public partial class Minimap : Control
             _stamps[team][cell] = _frame;
             _units.DrawRect(new Rect2(at - Vector2.One * (DotSize / 2), Vector2.One * DotSize), DotColors[team]);
         }
-    }
-
-    void DrawView()
-    {
-        if (ViewOutline?.Invoke() is not { Length: 4 } corners)
-            return;
-        var points = new Vector2[5];
-        for (int i = 0; i < 4; i++)
-            points[i] = ToMinimap(corners[i]);
-        points[4] = points[0];
-        _view.DrawPolyline(points, new Color(1, 1, 1, 0.85f), 1.5f);
     }
 
     public override void _GuiInput(InputEvent @event)

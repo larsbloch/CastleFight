@@ -84,7 +84,6 @@ public partial class MatchView : Node3D
         _hud.LeaveRequested += () => LeaveRequested?.Invoke();
         _hud.RestartRequested += () => RestartRequested?.Invoke();
         _hud.Minimap.SetSimulation(Sim);
-        _hud.Minimap.ViewOutline = _cameraRig.ViewOutline;
         _hud.Minimap.Clicked += _cameraRig.MoveTo;
 
         if (_session is NetworkSession online)

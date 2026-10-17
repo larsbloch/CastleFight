@@ -35,21 +35,6 @@ public partial class CameraRig : Node3D
     public void MoveTo(Vector2 mapPoint) =>
         _focus = new Vector3(Mathf.Clamp(mapPoint.X, 0f, _bounds.X), 0f, Mathf.Clamp(mapPoint.Y, 0f, _bounds.Y));
 
-    /// <summary>The ground under the screen's corners as map points (x, y), clockwise from the top left; null if a corner misses it.</summary>
-    public Vector2[]? ViewOutline()
-    {
-        var size = GetViewport().GetVisibleRect().Size;
-        Vector2[] corners = [Vector2.Zero, new(size.X, 0), size, new(0, size.Y)];
-        var outline = new Vector2[4];
-        for (int i = 0; i < 4; i++)
-        {
-            if (ScreenToGround(corners[i]) is not { } ground)
-                return null;
-            outline[i] = new Vector2(ground.X, ground.Z);
-        }
-        return outline;
-    }
-
     public override void _Process(double delta)
     {
         var move = Vector3.Zero;
