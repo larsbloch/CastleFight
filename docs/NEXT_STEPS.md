@@ -271,6 +271,28 @@ Every player has one builder; buildings are no longer placed instantly by the pl
 - Ideas: keep the builder from walking into the enemy base, show the queued path and moves, a second `F1` press
   centres the camera on the builder, a model instead of the star.
 
+## End of the match (done)
+
+When a castle falls (`Simulation.Endgame.cs`):
+
+- **Everything stops:** buildings stop spawning, income stops, nobody targets or attacks any more (targets are
+  cleared), and every builder is stopped (a site under construction is refunded, Shift queues are emptied) and
+  ignores new orders, F1 included. The bots stop thinking. `DebugSpawn` (K) still works, so you can throw more units
+  at the hole.
+- **Teardown:** for `Simulation.TeardownTicks` (5 s) the fallen castle is torn down. For now nothing moves and
+  `EndgameView` just draws the castle at no health where it stood; a teardown animation goes here later
+  (`GameOverTick` says when it started).
+- **The hole:** then the castle becomes a round hole as wide as the castle (`HolePosition`, `HoleRadius`). Every unit,
+  of both teams, walks to it: a whole-map flow field (`BaseFlowField.ToHole`, buildings block it) leads them around
+  walls and buildings and up the ramps, and for the last 6 tiles they walk straight in. A unit whose centre is over the
+  hole drops in and is freed; `HoleDrops` counts them. Buildings stay where they are.
+- **Godot:** `EndgameView` draws the hole (a black disc with an earth rim) and the count above it (a gold
+  billboard label that pops when it goes up). The VICTORY/DEFEAT banner (and the other banners) moved up under the
+  top bar so the middle of the view stays clear. The builder is deselected and can't be selected again.
+- `GameOverTick`, the hole position, whether it is open and `HoleDrops` are in the state hash.
+- 2,000 footmen on Single Lane are all in the hole after about 110 s; most of that is the walk.
+- Ideas: the teardown animation, a falling animation at the rim, counting per team, an end-of-game score screen.
+
 ## Later steps (in rough order)
 
 5. **Sim on its own thread.** The main thread renders by interpolating between the last two finished ticks,

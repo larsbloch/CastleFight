@@ -105,7 +105,10 @@ public partial class GameHud : Control
         AddChild(_banner);
         AddChild(_debug);
         AddChild(_message);
-        _banner.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        // Below the top bar and the debug readout, so the middle of the view (e.g. the hole at the end) stays clear.
+        _banner.SetAnchorsAndOffsetsPreset(LayoutPreset.TopWide);
+        _banner.OffsetTop = 150;
+        _banner.OffsetBottom = 260;
         _banner.AddThemeFontSizeOverride("font_size", 34);
 
         AddChild(_menuButton);

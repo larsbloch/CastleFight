@@ -11,6 +11,8 @@ namespace CastleFight.Sim;
 /// buildings or a crowd push it somewhere else, it re-routes from there. Buildings block it.</item>
 /// <item><see cref="ToEnemyCastle"/>: from the last stretch of the lanes through the enemy base to its castle. Enemy
 /// buildings only cost extra here, so a base walled in by buildings still leads attackers into the buildings.</item>
+/// <item><see cref="ToHole"/>: once the game is over, from anywhere on the map to the hole where the fallen castle
+/// stood. Buildings block it.</item>
 /// </list>
 /// Rebuilt only when a structure is placed or destroyed.
 /// </summary>
@@ -74,6 +76,10 @@ sealed class BaseFlowField
             : enemyBase with { MaxX = Math.Min(enemyBase.MaxX + LaneLeadTiles, map.LaneMaxX) };
         return new BaseFlowField(map, team, area, [map.CastleFootprint(1 - team)], structuresBlock: false);
     }
+
+    /// <summary>The whole map towards the hole left by the fallen castle (<paramref name="team"/> only breaks ties).</summary>
+    public static BaseFlowField ToHole(MapDefinition map, int team, TileRect hole) =>
+        new(map, team, new TileRect(0, 0, map.LengthTiles, map.WidthTiles), [hole], structuresBlock: true);
 
     /// <summary>Unit step direction at the position, or zero outside the area or where no path exists.</summary>
     public FixVec2 DirectionAt(FixVec2 position)

@@ -24,7 +24,7 @@ public sealed class ScriptedBot
     public bool TryThink(Simulation sim, out Command command)
     {
         command = default;
-        if ((sim.Tick + PlayerId * 7) % ThinkIntervalTicks != 0)
+        if (sim.IsGameOver || (sim.Tick + PlayerId * 7) % ThinkIntervalTicks != 0)
             return false;
 
         var buildable = sim.Catalog.BuildableTypeIds;

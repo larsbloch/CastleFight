@@ -124,25 +124,32 @@ public sealed partial class Simulation
         foreach (ref readonly var command in commands)
             ApplyCommand(in command);
 
-        if (Tick % TicksPerSecond == 0)
+        if (!IsGameOver && Tick % TicksPerSecond == 0)
         {
             foreach (var player in _players)
                 player.Gold += _incomePerSecond;
         }
+        if (IsGameOver && !IsHoleOpen && Tick - GameOverTick >= TeardownTicks)
+            OpenHole();
 
         StepBuilders();
-        RunSpawners();
+        if (!IsGameOver)
+            RunSpawners();
 
         for (byte team = 0; team < TeamCount; team++)
             _teamGrids[team].Rebuild(Units, team);
         if (_structuresChanged)
             RebuildStructureData();
 
-        AcquireTargets();
+        if (!IsGameOver)
+            AcquireTargets();
         ComputeVelocities();
         Integrate();
-        ResolveAttacks();
+        if (!IsGameOver)
+            ResolveAttacks();
         RemoveDead();
+        if (IsHoleOpen)
+            DropIntoHole();
 
         Tick++;
     }
@@ -238,6 +245,8 @@ public sealed partial class Simulation
 
             case CommandKind.MoveBuilder:
             case CommandKind.Build:
+                if (IsGameOver)
+                    return;
                 ApplyBuilderCommand(player, in command);
                 break;
 
@@ -319,6 +328,7 @@ public sealed partial class Simulation
             field.Rebuild(_tileOccupant);
         foreach (var field in _castleFields)
             field.Rebuild(_tileOccupant);
+        _holeField?.Rebuild(_tileOccupant);
         _structuresChanged = false;
     }
 
@@ -551,7 +561,13 @@ public sealed partial class Simulation
             FixVec2 heading = FixVec2.Zero;
             FixVec2 desired = FixVec2.Zero;
 
-            if (u.HasValidTarget(i))
+            if (IsGameOver)
+            {
+                // Waiting for the castle to be torn down, then off to the hole.
+                heading = IsHoleOpen ? HoleHeading(position) : FixVec2.Zero;
+                desired = heading * type.Speed;
+            }
+            else if (u.HasValidTarget(i))
             {
                 int target = targets[i];
                 FixVec2 toTarget = positions[target] - position;
@@ -775,7 +791,7 @@ public sealed partial class Simulation
                 MarkFootprint(i, 0);
                 _structuresChanged = true;
                 if (Catalog[u.Type[i]].IsCastle && !IsGameOver)
-                    WinningTeam = 1 - u.Team[i];
+                    EndGame(i);
             }
             u.Free(i);
         }

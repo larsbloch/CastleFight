@@ -33,6 +33,7 @@ public partial class MatchView : Node3D
     GameHud _hud = null!;
     BuilderView _builders = null!;
     TerrainHeights _terrain = null!;
+    EndgameView _endgame = null!;
     CommandInfo[] _commands = [];
     bool _builderSelected = true;
     /// <summary>Index into <see cref="UnitCatalog.BuildableTypeIds"/> of the building being placed, or -1.</summary>
@@ -83,6 +84,9 @@ public partial class MatchView : Node3D
         _builders = new BuilderView { Terrain = _terrain };
         AddChild(_builders);
         _builders.Build(Sim);
+        _endgame = new EndgameView { Terrain = _terrain };
+        AddChild(_endgame);
+        _endgame.Build();
         _commands = new CommandInfo[Sim.Catalog.BuildableTypeIds.Count];
 
         var hudLayer = new CanvasLayer();
@@ -145,7 +149,14 @@ public partial class MatchView : Node3D
     public override void _Process(double delta)
     {
         _driver.Advance(delta);
+        if (Sim.IsGameOver)
+        {
+            // The builders have downed tools: nothing left to select or build.
+            _builderSelected = false;
+            _placing = -1;
+        }
         _renderer.Draw(Sim, _driver.Alpha);
+        _endgame.Draw(Sim, delta);
         _builders.Draw(Sim, _driver.Alpha, _session.LocalPlayerId, _builderSelected, delta);
         var overHud = GetViewport().GuiGetHoveredControl() is not null;
         _ghost.UpdatePreview(Sim, _session.LocalPlayerId, SelectedTypeId, overHud ? null : _cameraRig.ScreenToGround(GetViewport().GetMousePosition()),
@@ -192,7 +203,7 @@ public partial class MatchView : Node3D
                 if (_builderSelected)
                     StartPlacing(buildingIndex);
             }
-            else if (key.Keycode == Key.F1)
+            else if (key.Keycode == Key.F1 && !Sim.IsGameOver)
                 _builderSelected = true;
             else if (key.Keycode == Key.Escape)
                 OnEscape();
@@ -221,7 +232,7 @@ public partial class MatchView : Node3D
             if (_placing >= 0)
                 TryPlace(click.Position, queued: click.ShiftPressed);
             else
-                _builderSelected = IsOnLocalBuilder(click.Position);
+                _builderSelected = !Sim.IsGameOver && IsOnLocalBuilder(click.Position);
         }
     }
 
