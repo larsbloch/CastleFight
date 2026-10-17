@@ -15,6 +15,7 @@ public partial class GameHud : Control
 {
     const float TopBarHeight = 34;
     const float TowerHeight = 206;
+    const float CommandTowerHeight = 260; // the right tower is taller to fit the command card
     const float WallHeight = 170;
     const float MerlonWidth = 40, MerlonHeight = 20, MerlonGap = 20;
     const float Pad = 16;
@@ -24,8 +25,8 @@ public partial class GameHud : Control
     const float PortraitWidth = 150, PortraitArch = 34;
     const int InventoryColumns = 2, InventoryRows = 3;
     const float InventorySlot = 46, InventoryGap = 5;
-    const int CommandColumns = 3, CommandRows = 2;
-    const float CommandSlot = 72, CommandGap = 6;
+    const int CommandColumns = 4, CommandRows = 3;
+    const float CommandSlot = 64, CommandGap = 6;
     const float SlotInset = 6; // from a well's edge to its slots
 
     static readonly Color Bronze = new(0.7f, 0.52f, 0.24f);
@@ -219,7 +220,7 @@ public partial class GameHud : Control
         var commandSize = SlotGrid(CommandColumns, CommandRows, CommandSlot, CommandGap);
         var inventorySize = SlotGrid(InventoryColumns, InventoryRows, InventorySlot, InventoryGap);
         float rightWidth = Pad + inventorySize.X + 12 + commandSize.X + Pad;
-        _rightTower = new Rect2(w - rightWidth, h - TowerHeight, rightWidth, TowerHeight);
+        _rightTower = new Rect2(w - rightWidth, h - CommandTowerHeight, rightWidth, CommandTowerHeight);
         var commands = new Rect2(w - Pad - commandSize.X, h - 12 - commandSize.Y, commandSize);
         PlaceSlots(_commandWell, _commandSlots, commands, CommandColumns, CommandSlot, CommandGap);
         var inventory = new Rect2(commands.Position.X - 12 - inventorySize.X, h - 12 - inventorySize.Y, inventorySize);

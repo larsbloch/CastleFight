@@ -224,8 +224,8 @@ top-bar buttons (theme variations `HudButton`, `HudWell`, `HudSlot`, `HudResourc
   minimap.
 - **Bottom console:** a castle wall with battlements. Left tower: `Minimap` (a `MapIcon` letterboxed to the map's
   aspect, blue/red dots per unit and squares per building, refreshed 10 times a second; dense crowds are drawn as one
-  dot per cell; the camera's view outline; click/drag moves the camera). Middle: an arched portrait frame and the unit
-  stats well (both empty). Right tower: inventory (2x3) and the command card (3x2), all empty for now.
+  dot per cell; click/drag moves the camera). Middle: an arched portrait frame and the unit stats well (both empty).
+  Right tower (taller than the left one): inventory (2x3) and the command card (4 wide, 3 high), all empty for now.
 - Only the stone takes the mouse (`GameHud._HasPoint`); clicks and the wheel anywhere else go to the game, and the
   placement ghost hides while the mouse is over the HUD.
 - The window now uses `canvas_items` scaling in matches as well (it used to be off), so the HUD is laid out at
