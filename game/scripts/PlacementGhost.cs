@@ -35,7 +35,8 @@ public partial class PlacementGhost : MeshInstance3D
         (Mathf.FloorToInt(ground.X - footprintTiles * 0.5f + 0.5f), Mathf.FloorToInt(ground.Z - footprintTiles * 0.5f + 0.5f));
 
     /// <param name="typeId">Selected building type, or -1 to hide the ghost.</param>
-    public void UpdatePreview(Simulation sim, int playerId, int typeId, Vector3? ground)
+    /// <param name="queued">Shift is held: the builder's planned sites count as blocked.</param>
+    public void UpdatePreview(Simulation sim, int playerId, int typeId, Vector3? ground, bool queued)
     {
         if (typeId < 0 || ground is not { } point || sim.IsGameOver)
         {
@@ -45,7 +46,7 @@ public partial class PlacementGhost : MeshInstance3D
 
         int size = sim.Catalog[typeId].FootprintTiles;
         var (tileX, tileY) = Snap(point, size);
-        var result = sim.CheckPlacement(playerId, typeId, tileX, tileY);
+        var result = sim.CheckPlacement(playerId, typeId, tileX, tileY, queued);
         _material.AlbedoColor = result switch
         {
             PlacementResult.Ok => Valid,

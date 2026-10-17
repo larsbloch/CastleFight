@@ -6,8 +6,8 @@ namespace CastleFight.Game;
 
 /// <summary>
 /// Draws every player's builder as a spinning star floating over the ground, a green ring under the local builder
-/// while it is selected, and the construction sites: a box that rises while a builder stands on it, plus a faint
-/// marker where the local builder is walking to build. Only reads the simulation.
+/// while it is selected, and the construction sites: a box that rises while a builder works next to it, plus faint
+/// markers on the sites the local builder is walking to or has queued. Only reads the simulation.
 /// </summary>
 public partial class BuilderView : Node3D
 {
@@ -24,7 +24,7 @@ public partial class BuilderView : Node3D
     readonly List<MeshInstance3D> _stars = new();
     readonly List<MeshInstance3D> _sites = new();
     MeshInstance3D _ring = null!;
-    MeshInstance3D _pendingSite = null!;
+    readonly List<MeshInstance3D> _pendingSites = new();
     float _spin;
 
     public TerrainHeights Terrain { get; set; } = null!;
@@ -68,14 +68,6 @@ public partial class BuilderView : Node3D
             Visible = false,
         };
         AddChild(_ring);
-        _pendingSite = new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = Vector3.One },
-            MaterialOverride = Translucent(PendingSiteColor),
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
-        };
-        AddChild(_pendingSite);
     }
 
     /// <summary>Where the builder is drawn (the middle of the star), interpolated between ticks.</summary>
@@ -107,9 +99,38 @@ public partial class BuilderView : Node3D
             _ring.Position = new Vector3(at.X, at.Y - HoverHeight + 0.08f, at.Z);
         }
 
-        _pendingSite.Visible = local.Order == BuilderOrder.GoToSite;
-        if (_pendingSite.Visible)
-            PlaceBox(_pendingSite, sim.SiteOf(local), 0.15f);
+        DrawPendingSites(sim, local);
+    }
+
+    /// <summary>The site the local builder is walking to, then every queued one.</summary>
+    void DrawPendingSites(Simulation sim, Builder local)
+    {
+        int count = 0;
+        if (local.Order == BuilderOrder.GoToSite)
+            PlaceBox(PendingSite(count++), sim.SiteOf(local), 0.15f);
+        foreach (var task in local.Queue)
+        {
+            if (task.Kind == BuilderTaskKind.Build)
+                PlaceBox(PendingSite(count++), sim.SiteOf(task), 0.15f);
+        }
+        for (int i = 0; i < _pendingSites.Count; i++)
+            _pendingSites[i].Visible = i < count;
+    }
+
+    MeshInstance3D PendingSite(int index)
+    {
+        if (index == _pendingSites.Count)
+        {
+            var box = new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = Vector3.One },
+                MaterialOverride = Translucent(PendingSiteColor),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            AddChild(box);
+            _pendingSites.Add(box);
+        }
+        return _pendingSites[index];
     }
 
     void DrawSite(MeshInstance3D site, Simulation sim, Builder builder)

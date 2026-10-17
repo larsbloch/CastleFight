@@ -5,7 +5,7 @@ namespace CastleFight.Net.Protocol;
 public static class ProtocolInfo
 {
     /// <summary>Bump on any wire-format or simulation-rule change; mismatched clients are rejected.</summary>
-    public const ushort Version = 2;
+    public const ushort Version = 3;
 
     public const int DefaultPort = 7777;
     public const string ConnectionKey = "CastleFight";

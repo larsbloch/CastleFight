@@ -32,6 +32,7 @@ public partial class MatchView : Node3D
     Settings _settings = null!;
     GameHud _hud = null!;
     BuilderView _builders = null!;
+    TerrainHeights _terrain = null!;
     CommandInfo[] _commands = [];
     bool _builderSelected = true;
     /// <summary>Index into <see cref="UnitCatalog.BuildableTypeIds"/> of the building being placed, or -1.</summary>
@@ -66,20 +67,20 @@ public partial class MatchView : Node3D
 
     public override void _Ready()
     {
-        var terrain = new TerrainHeights(Sim.Map);
+        _terrain = new TerrainHeights(Sim.Map);
         var scenery = new MapScenery();
         AddChild(scenery);
         scenery.Build(Sim.Map);
 
-        _cameraRig = new CameraRig { Terrain = terrain };
+        _cameraRig = new CameraRig { Terrain = _terrain };
         AddChild(_cameraRig);
         _cameraRig.Frame(new Vector2(Sim.Map.Length.ToFloat(), Sim.Map.Width.ToFloat()));
         _renderer = new UnitRenderer();
         AddChild(_renderer);
-        _renderer.Build(Sim, terrain);
-        _ghost = new PlacementGhost { Terrain = terrain };
+        _renderer.Build(Sim, _terrain);
+        _ghost = new PlacementGhost { Terrain = _terrain };
         AddChild(_ghost);
-        _builders = new BuilderView { Terrain = terrain };
+        _builders = new BuilderView { Terrain = _terrain };
         AddChild(_builders);
         _builders.Build(Sim);
         _commands = new CommandInfo[Sim.Catalog.BuildableTypeIds.Count];
@@ -147,7 +148,8 @@ public partial class MatchView : Node3D
         _renderer.Draw(Sim, _driver.Alpha);
         _builders.Draw(Sim, _driver.Alpha, _session.LocalPlayerId, _builderSelected, delta);
         var overHud = GetViewport().GuiGetHoveredControl() is not null;
-        _ghost.UpdatePreview(Sim, _session.LocalPlayerId, SelectedTypeId, overHud ? null : _cameraRig.ScreenToGround(GetViewport().GetMousePosition()));
+        _ghost.UpdatePreview(Sim, _session.LocalPlayerId, SelectedTypeId, overHud ? null : _cameraRig.ScreenToGround(GetViewport().GetMousePosition()),
+            queued: Input.IsKeyPressed(Key.Shift));
         _hud.SetResources(Sim.Players[_session.LocalPlayerId].Gold, wood: 0, food: 0);
         UpdateSelectionHud();
         _leaveConfirmTimer = Math.Max(0, _leaveConfirmTimer - delta);
@@ -190,6 +192,8 @@ public partial class MatchView : Node3D
                 if (_builderSelected)
                     StartPlacing(buildingIndex);
             }
+            else if (key.Keycode == Key.F1)
+                _builderSelected = true;
             else if (key.Keycode == Key.Escape)
                 OnEscape();
             else if (key.Keycode == Key.Space && !_session.IsNetworked)
@@ -201,17 +205,21 @@ public partial class MatchView : Node3D
         }
         else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right } rightClick)
         {
-            // Right click cancels placing; otherwise it sends the selected builder there.
+            // Right click cancels placing; otherwise it sends the selected builder there (with Shift: after its other orders).
             if (_placing >= 0)
                 _placing = -1;
             else if (_builderSelected && _cameraRig.ScreenToGround(rightClick.Position) is { } ground)
-                _session.Issue(Command.MoveBuilder(_session.LocalPlayerId, new FixVec2(Fix.FromFloat(ground.X), Fix.FromFloat(ground.Z))));
+            {
+                var destination = new FixVec2(Fix.FromFloat(ground.X), Fix.FromFloat(ground.Z));
+                _session.Issue(Command.MoveBuilder(_session.LocalPlayerId, destination, queued: rightClick.ShiftPressed));
+                AddChild(new MoveMarker { Terrain = _terrain, Center = new Vector2(ground.X, ground.Z) });
+            }
         }
         else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click)
         {
             // Left click places the building being placed; otherwise it selects the builder if it hits it, else deselects.
             if (_placing >= 0)
-                TryPlace(click.Position);
+                TryPlace(click.Position, queued: click.ShiftPressed);
             else
                 _builderSelected = IsOnLocalBuilder(click.Position);
         }
@@ -225,20 +233,23 @@ public partial class MatchView : Node3D
             ShowError($"Not enough gold for the {type.Name} ({type.Cost}).");
     }
 
-    void TryPlace(Vector2 screenPosition)
+    /// <param name="queued">Shift: the build joins the builder's queue (it may wait for the gold) and the building
+    /// stays picked, so more can be placed.</param>
+    void TryPlace(Vector2 screenPosition, bool queued)
     {
         int typeId = SelectedTypeId;
         if (_cameraRig.ScreenToGround(screenPosition) is not { } ground)
             return;
         var (tileX, tileY) = PlacementGhost.Snap(ground, Sim.Catalog[typeId].FootprintTiles);
-        var result = Sim.CheckPlacement(_session.LocalPlayerId, typeId, tileX, tileY);
-        if (result != PlacementResult.Ok)
+        var result = Sim.CheckPlacement(_session.LocalPlayerId, typeId, tileX, tileY, queued);
+        if (result != PlacementResult.Ok && !(queued && result == PlacementResult.NotEnoughGold))
         {
             ShowError(PlacementError(result));
             return;
         }
-        _session.Issue(Command.Build(_session.LocalPlayerId, (ushort)typeId, tileX, tileY));
-        _placing = -1;
+        _session.Issue(Command.Build(_session.LocalPlayerId, (ushort)typeId, tileX, tileY, queued));
+        if (!queued)
+            _placing = -1;
     }
 
     static string PlacementError(PlacementResult result) => result switch
@@ -247,6 +258,7 @@ public partial class MatchView : Node3D
         PlacementResult.OutsideZone => "Can't build there: outside your build zones.",
         PlacementResult.Occupied => "Can't build there: something is in the way.",
         PlacementResult.OnRamp => "Can't build on a ramp.",
+        PlacementResult.Unreachable => "Can't build there: the builder can't get next to it.",
         _ => "Can't build there.",
     };
 
@@ -275,7 +287,7 @@ public partial class MatchView : Node3D
         var builder = player.Builder;
         if (builder.BuildFailedTick != _seenBuildFailure)
         {
-            // The builder reached the site but could not build (someone built there first, or gold ran out).
+            // The builder could not build (someone built there first, gold ran out, or it can't get next to the site).
             ShowError(PlacementError(builder.BuildFailure));
             _seenBuildFailure = builder.BuildFailedTick;
         }
@@ -301,9 +313,13 @@ public partial class MatchView : Node3D
         {
             BuilderOrder.Move => "Walking.",
             BuilderOrder.GoToSite => $"Going to build: {site}.",
-            BuilderOrder.Construct => $"Building {site}: {builder.BuildProgress * 100 / Simulation.BuildTicks}%. Moving away cancels it.",
-            _ => _placing >= 0 ? $"Left-click to place the {Sim.Catalog[SelectedTypeId].Name}, right-click to cancel." : "Idle. Right-click to move, pick a building to build.",
+            BuilderOrder.Construct => $"Building {site}: {builder.BuildProgress * 100 / Simulation.BuildTicks}%. A new order cancels it, Shift queues it.",
+            _ => "Idle. Right-click to move, pick a building to build. Hold Shift to queue orders.",
         };
+        if (builder.Queue.Count > 0)
+            status += $" {builder.Queue.Count} more queued.";
+        if (_placing >= 0)
+            status = $"Left-click to place the {Sim.Catalog[SelectedTypeId].Name} (Shift: queue it), right-click to cancel.";
         _hud.SetSelection("Builder", status, UnitRenderer.TeamColors[player.Team].Lightened(0.35f));
     }
 
@@ -383,7 +399,8 @@ public partial class MatchView : Node3D
 
         var player = Sim.Players[_session.LocalPlayerId];
         string team = player.Team == 0 ? "blue, left" : "red, right";
-        text.AppendLine($"Builder ({team}): LMB select / deselect, RMB move, 1-{_commands.Length} or the command HUD to build, then LMB place, RMB/Esc cancel");
+        text.AppendLine($"Builder ({team}): F1 or LMB select, LMB deselect, RMB move, 1-{_commands.Length} or the command HUD to build, " +
+            "then LMB place, RMB/Esc cancel. Shift+RMB / Shift+LMB queue");
         text.AppendLine($"K +{StressSpawnPerTeam} units   " + (_session.IsNetworked ? "" : "Space pause   R restart   ") + "Esc Esc leave   WASD pan   Wheel zoom   F10 menu   F11 debug");
         _hud.DebugText = text.ToString();
 
