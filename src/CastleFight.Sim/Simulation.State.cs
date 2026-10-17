@@ -40,6 +40,11 @@ public sealed partial class Simulation
     {
         sink.Add("tick", Tick);
         sink.Add("winner", WinningTeam);
+        sink.Add("gameOverTick", GameOverTick);
+        sink.Add("holeX", HolePosition.X.Raw);
+        sink.Add("holeY", HolePosition.Y.Raw);
+        sink.Add("holeOpen", IsHoleOpen ? 1 : 0);
+        sink.Add("holeDrops", HoleDrops);
         sink.Add("rng", (long)_rng.State);
         sink.Add("nextUnitId", _nextUnitId);
         sink.Add("map", (long)Map.Fingerprint);
